@@ -1,0 +1,669 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   width="100%"
+   viewBox="0 0 680 920"
+   role="img"
+   version="1.1"
+   id="svg33"
+   sodipodi:docname="post-mortem_architecture.svg"
+   inkscape:export-filename="post-mortem_architecture-2.svg"
+   inkscape:export-xdpi="96"
+   inkscape:export-ydpi="96"
+   inkscape:version="1.4.3 (0d15f75042, 2025-12-25)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <sodipodi:namedview
+     id="namedview33"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:export-bgcolor="#ffffffff"
+     inkscape:zoom="1.7391304"
+     inkscape:cx="215.9125"
+     inkscape:cy="219.075"
+     inkscape:window-width="1904"
+     inkscape:window-height="998"
+     inkscape:window-x="26"
+     inkscape:window-y="23"
+     inkscape:window-maximized="0"
+     inkscape:current-layer="svg33" />
+  <title
+     style="fill:rgb(0, 0, 0);stroke:none;color:rgb(251, 251, 254);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+     id="title1">Sentry – komplett projektflöde</title>
+  <desc
+     style="fill:rgb(0, 0, 0);stroke:none;color:rgb(251, 251, 254);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+     id="desc1">Flödesschema över hela Sentry e-postsäkerhetsverktyget, från mottagning till rapport</desc>
+  <defs
+     id="defs1">
+    <marker
+       id="arrow"
+       viewBox="0 0 10 10"
+       refX="8"
+       refY="5"
+       markerWidth="6"
+       markerHeight="6"
+       orient="auto-start-reverse">
+      <path
+         d="M2 1L8 5L2 9"
+         fill="none"
+         stroke="context-stroke"
+         stroke-width="1.5"
+         stroke-linecap="round"
+         stroke-linejoin="round"
+         id="path1" />
+    </marker>
+  </defs>
+  <!-- STEG 1: Ta emot mail -->
+  <g
+     onclick="sendPrompt('Förklara hur aiosmtpd tar emot ett mail i Sentry')"
+     style="color:#fbfbfe;font-weight:400;font-size:16px;font-family:'Anthropic Sans', '-apple-system', BlinkMacSystemFont, 'Segoe UI', sans-serif;dominant-baseline:auto;text-anchor:start;opacity:1;fill:#000000;stroke:#020202;stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1"
+     id="g2"
+     transform="matrix(1.0000321,0,0,0.96643651,-0.01090758,1.0088822)">
+    <rect
+       x="12"
+       y="104"
+       width="656"
+       height="628"
+       rx="14"
+       fill="none"
+       stroke="var(--color-border-tertiary)"
+       stroke-width="1.5"
+       stroke-dasharray="8 4"
+       style="color:#fbfbfe;font-weight:400;font-size:16px;font-family:'Anthropic Sans', '-apple-system', BlinkMacSystemFont, 'Segoe UI', sans-serif;dominant-baseline:auto;text-anchor:start;opacity:1;fill:#2ae6e6;fill-opacity:1;stroke:#020202;stroke-width:1.5px;stroke-linecap:butt;stroke-linejoin:miter;stroke-dasharray:8px, 4px;stroke-opacity:1"
+       id="rect32" />
+    <rect
+       x="220"
+       y="30"
+       width="240"
+       height="56"
+       rx="8"
+       stroke-width="0.5"
+       style="color:#fbfbfe;font-weight:400;font-size:16px;font-family:'Anthropic Sans', '-apple-system', BlinkMacSystemFont, 'Segoe UI', sans-serif;dominant-baseline:auto;text-anchor:start;opacity:1;fill:#0c447c;stroke:#020202;stroke-width:0.5px;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1"
+       id="rect1" />
+    <text
+       x="340"
+       y="52"
+       text-anchor="middle"
+       dominant-baseline="central"
+       style="color:#fbfbfe;font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:14px;font-family:Sans;-inkscape-font-specification:'Sans, Normal';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;dominant-baseline:central;text-anchor:middle;opacity:1;fill:#b5d4f4;stroke:#ffffff;stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1"
+       id="text1"><tspan
+         style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:14px;font-family:'Anthropic Sans', '-apple-system', BlinkMacSystemFont, 'Segoe UI', sans-serif;-inkscape-font-specification:'Anthropic Sans, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif, Normal';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal"
+         id="tspan46">Incoming e-mail</tspan></text>
+    <text
+       x="340"
+       y="70"
+       text-anchor="middle"
+       dominant-baseline="central"
+       style="color:#fbfbfe;font-weight:400;font-size:12px;font-family:'Anthropic Sans', '-apple-system', BlinkMacSystemFont, 'Segoe UI', sans-serif;dominant-baseline:central;text-anchor:middle;opacity:1;fill:#85b7eb;stroke:#020202;stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1"
+       id="text2"><tspan
+         style="stroke:#ffffff;stroke-opacity:1"
+         id="tspan45">Forwarded to scan@post-mortem.local</tspan></text>
+  </g>
+  <line
+     x1="340"
+     y1="86"
+     x2="340"
+     y2="116"
+     marker-end="url(#arrow)"
+     style="fill:none;stroke:rgb(156, 154, 146);color:rgb(251, 251, 254);stroke-width:1.5px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+     id="line2" />
+  <!-- STEG 2: SMTP-server -->
+  <g
+     onclick="sendPrompt('Hur fungerar aiosmtpd i Sentry-projektet?')"
+     style="fill:rgb(0, 0, 0);stroke:none;color:rgb(251, 251, 254);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+     id="g4">
+    <rect
+       x="220"
+       y="116"
+       width="240"
+       height="56"
+       rx="8"
+       stroke-width="0.5"
+       style="fill:rgb(8, 80, 65);stroke:rgb(93, 202, 165);color:rgb(251, 251, 254);stroke-width:0.5px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+       id="rect2" />
+    <text
+       x="340"
+       y="138"
+       text-anchor="middle"
+       dominant-baseline="central"
+       style="fill:rgb(159, 225, 203);stroke:none;color:rgb(251, 251, 254);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:14px;font-weight:500;text-anchor:middle;dominant-baseline:central"
+       id="text3">aiosmtpd (SMTP-server)</text>
+    <text
+       x="340"
+       y="156"
+       text-anchor="middle"
+       dominant-baseline="central"
+       style="color:#fbfbfe;font-weight:400;font-size:12px;font-family:'Anthropic Sans', '-apple-system', BlinkMacSystemFont, 'Segoe UI', sans-serif;dominant-baseline:central;text-anchor:middle;opacity:1;fill:#5dcaa5;stroke:none;stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter"
+       id="text4"><tspan
+         sodipodi:role="line"
+         id="tspan34"
+         x="340"
+         y="156">Recieves the mail, converting to.eml</tspan></text>
+  </g>
+  <line
+     x1="340"
+     y1="172"
+     x2="340"
+     y2="202"
+     marker-end="url(#arrow)"
+     style="fill:none;stroke:rgb(156, 154, 146);color:rgb(251, 251, 254);stroke-width:1.5px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+     id="line4" />
+  <!-- STEG 3: Format-konvertering -->
+  <g
+     onclick="sendPrompt('Hur konverterar Sentry .msg till .eml?')"
+     style="fill:rgb(0, 0, 0);stroke:none;color:rgb(251, 251, 254);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+     id="g6">
+    <rect
+       x="220"
+       y="202"
+       width="240"
+       height="56"
+       rx="8"
+       stroke-width="0.5"
+       style="fill:rgb(8, 80, 65);stroke:rgb(93, 202, 165);color:rgb(251, 251, 254);stroke-width:0.5px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+       id="rect4" />
+    <text
+       x="340"
+       y="224"
+       text-anchor="middle"
+       dominant-baseline="central"
+       style="color:#fbfbfe;font-weight:500;font-size:14px;font-family:'Anthropic Sans', '-apple-system', BlinkMacSystemFont, 'Segoe UI', sans-serif;dominant-baseline:central;text-anchor:middle;opacity:1;fill:#9fe1cb;stroke:none;stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter"
+       id="text5">Formatconversion</text>
+    <text
+       x="340"
+       y="242"
+       text-anchor="middle"
+       dominant-baseline="central"
+       style="color:#fbfbfe;font-weight:400;font-size:12px;font-family:'Anthropic Sans', '-apple-system', BlinkMacSystemFont, 'Segoe UI', sans-serif;dominant-baseline:central;text-anchor:middle;opacity:1;fill:#5dcaa5;stroke:none;stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter"
+       id="text6">.msg / .eml → .eml standard format</text>
+  </g>
+  <line
+     x1="340"
+     y1="258"
+     x2="340"
+     y2="288"
+     marker-end="url(#arrow)"
+     style="fill:none;stroke:rgb(156, 154, 146);color:rgb(251, 251, 254);stroke-width:1.5px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+     id="line6" />
+  <!-- STEG 4: Analyzer (kärnan) -->
+  <g
+     onclick="sendPrompt('Vad gör analyzer.py i Sentry?')"
+     style="fill:rgb(0, 0, 0);stroke:none;color:rgb(251, 251, 254);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+     id="g8">
+    <rect
+       x="190"
+       y="288"
+       width="300"
+       height="56"
+       rx="8"
+       stroke-width="0.5"
+       style="fill:rgb(60, 52, 137);stroke:rgb(175, 169, 236);color:rgb(251, 251, 254);stroke-width:0.5px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+       id="rect6" />
+    <text
+       x="340"
+       y="310"
+       text-anchor="middle"
+       dominant-baseline="central"
+       style="color:#fbfbfe;font-weight:500;font-size:14px;font-family:'Anthropic Sans', '-apple-system', BlinkMacSystemFont, 'Segoe UI', sans-serif;dominant-baseline:central;text-anchor:middle;opacity:1;fill:#cecbf6;stroke:none;stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter"
+       id="text7">analyzer.py (the core)</text>
+    <text
+       x="340"
+       y="328"
+       text-anchor="middle"
+       dominant-baseline="central"
+       style="color:#fbfbfe;font-weight:400;font-size:12px;font-family:'Anthropic Sans', '-apple-system', BlinkMacSystemFont, 'Segoe UI', sans-serif;dominant-baseline:central;text-anchor:middle;opacity:1;fill:#afa9ec;stroke:none;stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter"
+       id="text8">Dissecting the mail, Runs every security check</text>
+  </g>
+  <!-- Pilar ner till fyra parallella kontroller -->
+  <line
+     x1="260"
+     y1="344"
+     x2="100"
+     y2="420"
+     marker-end="url(#arrow)"
+     style="fill:none;stroke:rgb(156, 154, 146);color:rgb(251, 251, 254);stroke-width:1.5px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+     id="line8" />
+  <line
+     x1="300"
+     y1="344"
+     x2="230"
+     y2="420"
+     marker-end="url(#arrow)"
+     style="fill:none;stroke:rgb(156, 154, 146);color:rgb(251, 251, 254);stroke-width:1.5px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+     id="line9" />
+  <line
+     x1="380"
+     y1="344"
+     x2="450"
+     y2="420"
+     marker-end="url(#arrow)"
+     style="fill:none;stroke:rgb(156, 154, 146);color:rgb(251, 251, 254);stroke-width:1.5px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+     id="line10" />
+  <line
+     x1="420"
+     y1="344"
+     x2="580"
+     y2="420"
+     marker-end="url(#arrow)"
+     style="fill:none;stroke:rgb(156, 154, 146);color:rgb(251, 251, 254);stroke-width:1.5px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+     id="line11" />
+  <!-- Fyra kontroll-boxar -->
+  <g
+     onclick="sendPrompt('Vad är SMTP header-spårning och hur fungerar det?')"
+     style="fill:rgb(0, 0, 0);stroke:none;color:rgb(251, 251, 254);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+     id="g12">
+    <rect
+       x="30"
+       y="420"
+       width="140"
+       height="56"
+       rx="8"
+       stroke-width="0.5"
+       style="fill:rgb(99, 56, 6);stroke:rgb(239, 159, 39);color:rgb(251, 251, 254);stroke-width:0.5px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+       id="rect11" />
+    <text
+       x="100"
+       y="442"
+       text-anchor="middle"
+       dominant-baseline="central"
+       style="fill:rgb(250, 199, 117);stroke:none;color:rgb(251, 251, 254);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:14px;font-weight:500;text-anchor:middle;dominant-baseline:central"
+       id="text11">SMTP headers</text>
+    <text
+       x="100"
+       y="460"
+       text-anchor="middle"
+       dominant-baseline="central"
+       style="color:#fbfbfe;font-weight:400;font-size:12px;font-family:'Anthropic Sans', '-apple-system', BlinkMacSystemFont, 'Segoe UI', sans-serif;dominant-baseline:central;text-anchor:middle;opacity:1;fill:#ef9f27;stroke:none;stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter"
+       id="text12"><tspan
+         style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:10.6667px;font-family:Sans;-inkscape-font-specification:'Sans, Normal';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal"
+         id="tspan38">Tracing route, RFC 822</tspan></text>
+  </g>
+  <g
+     onclick="sendPrompt('Hur fungerar SPF, DKIM och DMARC i Sentry?')"
+     style="fill:rgb(0, 0, 0);stroke:none;color:rgb(251, 251, 254);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+     id="g14">
+    <rect
+       x="185"
+       y="420"
+       width="140"
+       height="56"
+       rx="8"
+       stroke-width="0.5"
+       style="fill:rgb(99, 56, 6);stroke:rgb(239, 159, 39);color:rgb(251, 251, 254);stroke-width:0.5px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+       id="rect12" />
+    <text
+       x="255"
+       y="442"
+       text-anchor="middle"
+       dominant-baseline="central"
+       style="color:#fbfbfe;font-weight:500;font-size:14px;font-family:'Anthropic Sans', '-apple-system', BlinkMacSystemFont, 'Segoe UI', sans-serif;dominant-baseline:central;text-anchor:middle;opacity:1;fill:#fac775;stroke:none;stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter"
+       id="text13">DNS-checks</text>
+    <text
+       x="255"
+       y="460"
+       text-anchor="middle"
+       dominant-baseline="central"
+       style="fill:rgb(239, 159, 39);stroke:none;color:rgb(251, 251, 254);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:12px;font-weight:400;text-anchor:middle;dominant-baseline:central"
+       id="text14">SPF, DKIM, DMARC</text>
+  </g>
+  <g
+     onclick="sendPrompt('Hur kollar Sentry bilagor mot MalwareBazaar?')"
+     style="fill:rgb(0, 0, 0);stroke:none;color:rgb(251, 251, 254);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+     id="g16">
+    <rect
+       x="380"
+       y="420"
+       width="140"
+       height="56"
+       rx="8"
+       stroke-width="0.5"
+       style="fill:rgb(99, 56, 6);stroke:rgb(239, 159, 39);color:rgb(251, 251, 254);stroke-width:0.5px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+       id="rect14" />
+    <text
+       x="450"
+       y="442"
+       text-anchor="middle"
+       dominant-baseline="central"
+       style="color:#fbfbfe;font-weight:500;font-size:14px;font-family:'Anthropic Sans', '-apple-system', BlinkMacSystemFont, 'Segoe UI', sans-serif;dominant-baseline:central;text-anchor:middle;opacity:1;fill:#fac775;stroke:none;stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter"
+       id="text15">Attachment-hash</text>
+    <text
+       x="450"
+       y="460"
+       text-anchor="middle"
+       dominant-baseline="central"
+       style="color:#fbfbfe;font-weight:400;font-size:12px;font-family:'Anthropic Sans', '-apple-system', BlinkMacSystemFont, 'Segoe UI', sans-serif;dominant-baseline:central;text-anchor:middle;white-space:pre;inline-size:146.857;opacity:1;fill:#ef9f27;stroke:none;stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter"
+       id="text16"
+       xml:space="preserve"><tspan
+         x="450"
+         y="460"
+         id="tspan2"><tspan
+           style="font-size:10.6667px;font-family:Sans;-inkscape-font-specification:'Sans, Normal'"
+           id="tspan1">MD5/SHA256 → databas</tspan></tspan></text>
+  </g>
+  <g
+     onclick="sendPrompt('Hur kollar Sentry länkar mot SpamHaus och URLhaus?')"
+     style="fill:rgb(0, 0, 0);stroke:none;color:rgb(251, 251, 254);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+     id="g18">
+    <rect
+       x="535"
+       y="420"
+       width="115"
+       height="56"
+       rx="8"
+       stroke-width="0.5"
+       style="fill:rgb(99, 56, 6);stroke:rgb(239, 159, 39);color:rgb(251, 251, 254);stroke-width:0.5px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+       id="rect16" />
+    <text
+       x="592"
+       y="442"
+       text-anchor="middle"
+       dominant-baseline="central"
+       style="color:#fbfbfe;font-weight:500;font-size:14px;font-family:'Anthropic Sans', '-apple-system', BlinkMacSystemFont, 'Segoe UI', sans-serif;dominant-baseline:central;text-anchor:middle;opacity:1;fill:#fac775;stroke:none;stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter"
+       id="text17">URL-check</text>
+    <text
+       x="592"
+       y="460"
+       text-anchor="middle"
+       dominant-baseline="central"
+       style="color:#fbfbfe;font-weight:400;font-size:12px;font-family:'Anthropic Sans', '-apple-system', BlinkMacSystemFont, 'Segoe UI', sans-serif;dominant-baseline:central;text-anchor:middle;opacity:1;fill:#ef9f27;stroke:none;stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter"
+       id="text18"><tspan
+         style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:10.6667px;font-family:Sans;-inkscape-font-specification:'Sans, Normal';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal"
+         id="tspan37">SpamHaus, URLhaus</tspan></text>
+  </g>
+  <!-- Pilar ner till externa databaser -->
+  <line
+     x1="100"
+     y1="476"
+     x2="100"
+     y2="530"
+     marker-end="url(#arrow)"
+     style="fill:none;stroke:rgb(156, 154, 146);color:rgb(251, 251, 254);stroke-width:1.5px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+     id="line18" />
+  <line
+     x1="255"
+     y1="476"
+     x2="255"
+     y2="530"
+     marker-end="url(#arrow)"
+     style="fill:none;stroke:rgb(156, 154, 146);color:rgb(251, 251, 254);stroke-width:1.5px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+     id="line19" />
+  <line
+     x1="450"
+     y1="476"
+     x2="450"
+     y2="530"
+     marker-end="url(#arrow)"
+     style="fill:none;stroke:rgb(156, 154, 146);color:rgb(251, 251, 254);stroke-width:1.5px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+     id="line20" />
+  <line
+     x1="592"
+     y1="476"
+     x2="592"
+     y2="530"
+     marker-end="url(#arrow)"
+     style="fill:none;stroke:rgb(156, 154, 146);color:rgb(251, 251, 254);stroke-width:1.5px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+     id="line21" />
+  <!-- Databas-boxar -->
+  <g
+     onclick="sendPrompt('Vad är dnspython och hur används det i Sentry?')"
+     style="fill:rgb(0, 0, 0);stroke:none;color:rgb(251, 251, 254);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+     id="g21">
+    <rect
+       x="30"
+       y="530"
+       width="140"
+       height="44"
+       rx="8"
+       stroke-width="0.5"
+       style="fill:rgb(68, 68, 65);stroke:rgb(180, 178, 169);color:rgb(251, 251, 254);stroke-width:0.5px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+       id="rect21" />
+    <text
+       x="100"
+       y="556"
+       text-anchor="middle"
+       dominant-baseline="central"
+       style="fill:rgb(180, 178, 169);stroke:none;color:rgb(251, 251, 254);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:12px;font-weight:400;text-anchor:middle;dominant-baseline:central"
+       id="text21">dnspython</text>
+  </g>
+  <g
+     onclick="sendPrompt('Hur gör man SPF och DMARC-uppslag med dnspython?')"
+     style="fill:rgb(0, 0, 0);stroke:none;color:rgb(251, 251, 254);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+     id="g22">
+    <rect
+       x="185"
+       y="530"
+       width="140"
+       height="44"
+       rx="8"
+       stroke-width="0.5"
+       style="fill:rgb(68, 68, 65);stroke:rgb(180, 178, 169);color:rgb(251, 251, 254);stroke-width:0.5px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+       id="rect22" />
+    <text
+       x="255"
+       y="556"
+       text-anchor="middle"
+       dominant-baseline="central"
+       style="color:#fbfbfe;font-weight:400;font-size:12px;font-family:'Anthropic Sans', '-apple-system', BlinkMacSystemFont, 'Segoe UI', sans-serif;dominant-baseline:central;text-anchor:middle;opacity:1;fill:#b4b2a9;stroke:none;stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter"
+       id="text22"><tspan
+         style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:10.6667px;font-family:Sans;-inkscape-font-specification:'Sans, Normal';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal"
+         id="tspan39">dnspython + MXToolbox</tspan></text>
+  </g>
+  <g
+     onclick="sendPrompt('Hur fungerar MalwareBazaar API-uppslag?')"
+     style="fill:rgb(0, 0, 0);stroke:none;color:rgb(251, 251, 254);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+     id="g23">
+    <rect
+       x="380"
+       y="530"
+       width="140"
+       height="44"
+       rx="8"
+       stroke-width="0.5"
+       style="fill:rgb(68, 68, 65);stroke:rgb(180, 178, 169);color:rgb(251, 251, 254);stroke-width:0.5px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+       id="rect23" />
+    <text
+       x="450"
+       y="556"
+       text-anchor="middle"
+       dominant-baseline="central"
+       style="fill:rgb(180, 178, 169);stroke:none;color:rgb(251, 251, 254);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:12px;font-weight:400;text-anchor:middle;dominant-baseline:central"
+       id="text23">MalwareBazaar API</text>
+  </g>
+  <g
+     onclick="sendPrompt('Hur gör man DNS-uppslag mot SpamHaus?')"
+     style="fill:rgb(0, 0, 0);stroke:none;color:rgb(251, 251, 254);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+     id="g24">
+    <rect
+       x="535"
+       y="530"
+       width="115"
+       height="44"
+       rx="8"
+       stroke-width="0.5"
+       style="fill:rgb(68, 68, 65);stroke:rgb(180, 178, 169);color:rgb(251, 251, 254);stroke-width:0.5px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+       id="rect24" />
+    <text
+       x="592"
+       y="556"
+       text-anchor="middle"
+       dominant-baseline="central"
+       style="fill:rgb(180, 178, 169);stroke:none;color:rgb(251, 251, 254);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:12px;font-weight:400;text-anchor:middle;dominant-baseline:central"
+       id="text24">SpamHaus DNS</text>
+  </g>
+  <!-- Pilar tillbaka upp till säkerhetspoäng -->
+  <line
+     x1="100"
+     y1="574"
+     x2="280"
+     y2="640"
+     marker-end="url(#arrow)"
+     style="fill:none;stroke:rgb(156, 154, 146);color:rgb(251, 251, 254);stroke-width:1.5px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+     id="line24" />
+  <line
+     x1="255"
+     y1="574"
+     x2="310"
+     y2="640"
+     marker-end="url(#arrow)"
+     style="fill:none;stroke:rgb(156, 154, 146);color:rgb(251, 251, 254);stroke-width:1.5px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+     id="line25" />
+  <line
+     x1="450"
+     y1="574"
+     x2="370"
+     y2="640"
+     marker-end="url(#arrow)"
+     style="fill:none;stroke:rgb(156, 154, 146);color:rgb(251, 251, 254);stroke-width:1.5px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+     id="line26" />
+  <line
+     x1="592"
+     y1="574"
+     x2="400"
+     y2="640"
+     marker-end="url(#arrow)"
+     style="fill:none;stroke:rgb(156, 154, 146);color:rgb(251, 251, 254);stroke-width:1.5px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+     id="line27" />
+  <!-- STEG 5: Säkerhetspoäng -->
+  <g
+     onclick="sendPrompt('Hur beräknas säkerhetspoängen i Sentry?')"
+     style="fill:rgb(0, 0, 0);stroke:none;color:rgb(251, 251, 254);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+     id="g28">
+    <rect
+       x="190"
+       y="640"
+       width="300"
+       height="56"
+       rx="8"
+       stroke-width="0.5"
+       style="fill:rgb(60, 52, 137);stroke:rgb(175, 169, 236);color:rgb(251, 251, 254);stroke-width:0.5px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+       id="rect27" />
+    <text
+       x="340.60989"
+       y="652.85181"
+       text-anchor="middle"
+       dominant-baseline="central"
+       style="color:#fbfbfe;font-weight:500;font-size:14px;font-family:'Anthropic Sans', '-apple-system', BlinkMacSystemFont, 'Segoe UI', sans-serif;dominant-baseline:central;text-anchor:middle;opacity:1;fill:#cecbf6;stroke:none;stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter"
+       id="text27">Security Assessment Scoring</text>
+    <text
+       x="339.59341"
+       y="670.03864"
+       text-anchor="middle"
+       dominant-baseline="central"
+       style="color:#fbfbfe;font-weight:400;font-size:12px;font-family:'Anthropic Sans', '-apple-system', BlinkMacSystemFont, 'Segoe UI', sans-serif;dominant-baseline:central;text-anchor:middle;opacity:1;fill:#afa9ec;stroke:none;stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter"
+       id="text28"><tspan
+         sodipodi:role="line"
+         id="tspan40"
+         x="339.59341"
+         y="670.03864"
+         style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:10.6667px;font-family:Sans;-inkscape-font-specification:'Sans, Normal';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal">MOST LIKELY:</tspan><tspan
+         sodipodi:role="line"
+         id="tspan41"
+         x="339.59341"
+         y="685.03864"
+         style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:10.6667px;font-family:Sans;-inkscape-font-specification:'Sans, Normal';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal">SECURE / NOT SECURE / MORE ANALYSIS NEEDED</tspan></text>
+  </g>
+  <line
+     x1="340"
+     y1="696"
+     x2="340"
+     y2="726"
+     marker-end="url(#arrow)"
+     style="fill:none;stroke:rgb(156, 154, 146);color:rgb(251, 251, 254);stroke-width:1.5px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+     id="line28" />
+  <!-- STEG 6: Rapport genereras -->
+  <g
+     onclick="sendPrompt('Hur genereras och formateras rapporten i Sentry?')"
+     style="fill:rgb(0, 0, 0);stroke:none;color:rgb(251, 251, 254);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+     id="g30">
+    <rect
+       x="220"
+       y="726"
+       width="240"
+       height="56"
+       rx="8"
+       stroke-width="0.5"
+       style="fill:rgb(8, 80, 65);stroke:rgb(93, 202, 165);color:rgb(251, 251, 254);stroke-width:0.5px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+       id="rect28" />
+    <text
+       x="340"
+       y="748"
+       text-anchor="middle"
+       dominant-baseline="central"
+       style="color:#fbfbfe;font-weight:500;font-size:14px;font-family:'Anthropic Sans', '-apple-system', BlinkMacSystemFont, 'Segoe UI', sans-serif;dominant-baseline:central;text-anchor:middle;opacity:1;fill:#9fe1cb;stroke:none;stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter"
+       id="text29">Report generation</text>
+    <text
+       x="340"
+       y="766"
+       text-anchor="middle"
+       dominant-baseline="central"
+       style="color:#fbfbfe;font-weight:400;font-size:12px;font-family:'Anthropic Sans', '-apple-system', BlinkMacSystemFont, 'Segoe UI', sans-serif;dominant-baseline:central;text-anchor:middle;opacity:1;fill:#5dcaa5;stroke:none;stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter"
+       id="text30">Compiling all finds</text>
+  </g>
+  <line
+     x1="340"
+     y1="782"
+     x2="340"
+     y2="812"
+     marker-end="url(#arrow)"
+     style="fill:none;stroke:rgb(156, 154, 146);color:rgb(251, 251, 254);stroke-width:1.5px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+     id="line30" />
+  <!-- STEG 7: Skicka rapport -->
+  <g
+     onclick="sendPrompt('Hur skickar Sentry tillbaka rapporten via smtplib?')"
+     style="fill:rgb(0, 0, 0);stroke:none;color:rgb(251, 251, 254);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+     id="g32">
+    <rect
+       x="220"
+       y="812"
+       width="240"
+       height="56"
+       rx="8"
+       stroke-width="0.5"
+       style="fill:rgb(12, 68, 124);stroke:rgb(133, 183, 235);color:rgb(251, 251, 254);stroke-width:0.5px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+       id="rect30" />
+    <text
+       x="340"
+       y="834"
+       text-anchor="middle"
+       dominant-baseline="central"
+       style="color:#fbfbfe;font-weight:500;font-size:14px;font-family:'Anthropic Sans', '-apple-system', BlinkMacSystemFont, 'Segoe UI', sans-serif;dominant-baseline:central;text-anchor:middle;opacity:1;fill:#b5d4f4;stroke:none;stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter"
+       id="text31">Scan Report sent</text>
+    <text
+       x="340"
+       y="852"
+       text-anchor="middle"
+       dominant-baseline="central"
+       style="color:#fbfbfe;font-weight:400;font-size:12px;font-family:'Anthropic Sans', '-apple-system', BlinkMacSystemFont, 'Segoe UI', sans-serif;dominant-baseline:central;text-anchor:middle;opacity:1;fill:#85b7eb;stroke:none;stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter"
+       id="text32">smtplib → your inbox</text>
+  </g>
+  <!-- Docker-container ram -->
+  <text
+     x="28"
+     y="122"
+     dominant-baseline="central"
+     style="color:#fbfbfe;font-weight:400;font-size:12px;font-family:'Anthropic Sans', '-apple-system', BlinkMacSystemFont, 'Segoe UI', sans-serif;dominant-baseline:central;text-anchor:start;opacity:1;fill:#c2c0b6;stroke:none;stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter"
+     id="text33"><tspan
+       style="fill:#008080"
+       id="tspan44">Docker / Podman-container</tspan></text>
+  <text
+     xml:space="preserve"
+     style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:10.6667px;font-family:Sans;-inkscape-font-specification:'Sans, Normal';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;writing-mode:lr-tb;direction:ltr;fill:#000000;stroke:#ffffff;stroke-width:1.259;paint-order:stroke fill markers"
+     x="4.5999994"
+     y="13.225"
+     id="text42"><tspan
+       sodipodi:role="line"
+       id="tspan42"
+       x="4.5999994"
+       y="13.225"
+       style="font-style:normal;font-variant:normal;font-weight:bold;font-stretch:normal;font-size:10.6667px;font-family:Sans;-inkscape-font-specification:'Sans, Bold';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal">POST-MORTEM E-MAIL SECURITY ANALYZER</tspan><tspan
+       sodipodi:role="line"
+       x="4.5999994"
+       y="26.558376"
+       id="tspan43">Dataflow / Architecture</tspan></text>
+</svg>
