@@ -6,7 +6,6 @@ from aiosmtpd.handlers import AsyncMessage
 
 class PostMortemMessageHandler(AsyncMessage):
     async def handle_message(self, message):
-<<<<<<< HEAD
         print("=== NEW MAIL RECIEVED ===")
         print(f"From:     {message['From']}")
         print(f"To:     {message['To']}")
@@ -14,15 +13,6 @@ class PostMortemMessageHandler(AsyncMessage):
         print("==========================")
 
         # Call parser.py here
-=======
-        print("=== NYTT MAIL MOTTAGET ===")
-        print(f"Från:     {message['From']}")
-        print(f"Till:     {message['To']}")
-        print(f"Ämne:     {message['Subject']}")
-        print("==========================")
-
-        # Calling parser.py here later 
->>>>>>> 59140f46e20fde7f8f3c7c0646a447dc578858ab
         # parsed = parse_email(message)
         # result = analyze(parsed)
         # send_report(result)
