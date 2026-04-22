@@ -7,16 +7,13 @@ from aiosmtpd.handlers import AsyncMessage
 
 class PostMortemHandler(AsyncMessage):
     async def handle_message(self, message):
-        # "async" = den här funktionen kan pausa och vänta utan att blockera allt annat
-        # "message" = hela e-postmeddelandet som ett Python email.message-objekt
-
         print("=== NYTT MAIL MOTTAGET ===")
-        print(f"Från:     {message['From']}")       # Hämtar From-headern
-        print(f"Till:     {message['To']}")         # Hämtar To-headern
-        print(f"Ämne:     {message['Subject']}")    # Hämtar Subject-headern
+        print(f"Från:     {message['From']}")
+        print(f"Till:     {message['To']}")
+        print(f"Ämne:     {message['Subject']}")
         print("==========================")
 
-        # Här anropar vi senare parser.py
+        # Calling parser.py here later 
         # parsed = parse_email(message)
         # result = analyze(parsed)
         # send_report(result)
