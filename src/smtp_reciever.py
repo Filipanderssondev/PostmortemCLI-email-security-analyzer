@@ -1,46 +1,66 @@
-# This is the local e-mail reciever server, The "mailbox", an SMTP server listening after incoming mail
+# src/smtp_receiver.py
+# SMTP handler – receives forwarded emails and passes them to the parser.
+# This is NOT an entrypoint. main.py starts this when "listen" is used.
 
 import asyncio
 from aiosmtpd.controller import Controller
 from aiosmtpd.handlers import AsyncMessage
 
-class PostMortemMessageHandler(AsyncMessage):
+from src.parser import parse_email
+# Parser is shared – same function used in both scan and listen mode
+
+
+class PostMortemHandler(AsyncMessage):
+    """
+    Handles incoming SMTP messages.
+    aiosmtpd calls handle_message() automatically each time an email arrives.
+    """
+
     async def handle_message(self, message):
-        print("\n")
-        print("=== NEW MAIL RECIEVED ===")
-        print(f"From:     {message['From']}")
-        print(f"To:     {message['To']}")
-        print(f"Subject:     {message['Subject']}")
-        print("==========================")
-        print("\n")
+        # "message" = a Python mail object, delivered by aiosmtpd
+        # Exact same type as what load_email_file() returns – parser works identically
 
-        # Call parser.py here
-        # parsed = parse_email(message)
+        print("\n=== EMAIL RECEIVED ===")
+        print(f"  From:    {message['From']}")
+        print(f"  To:      {message['To']}")
+        print(f"  Subject: {message['Subject']}")
+        print("======================")
+
+        parsed = parse_email(message)
+        # Hand off to parser immediately – same pipeline as scan mode
+
+        # TODO: wire into analyzer and reporter when ready
         # result = analyze(parsed)
-        # send_report(result)
+        # generate_report(result)
+
+        print(f"  URLs found:   {len(parsed['urls'])}")
+        print(f"  Attachments:  {len(parsed['attachments'])}")
+        print("======================\n")
 
 
-# The Main function (Obviously, but comment for structure)
-async def main():
-    handler = PostMortemMessageHandler()        
-    controller = Controller(
-        handler,
-        hostname="0.0.0.0",
-        port=1025               
-    )
+def start_listener(host: str = "0.0.0.0", port: int = 1025):
+    """
+    Starts the SMTP server and blocks until Ctrl+C.
+    Called by main.py when the user runs: postmortemcli listen
+    """
 
-    controller.start()
-    print("Post-Mortem SMTP-reciever running on port 1025...")
-    print("Send mail to: scan@localhost")
-    print("Press Ctrl+C to stop.")
+    async def _run():
+        handler    = PostMortemHandler()
+        controller = Controller(handler, hostname=host, port=port)
 
-    try:
-        await asyncio.sleep(float("inf")) 
-    except KeyboardInterrupt:
-        pass
-    finally:
-        controller.stop()
-        print("Server stopped.")
+        controller.start()
+        print(f"[*] Listening for emails on {host}:{port}")
+        print(f"[*] Forward suspicious emails to: scan@localhost")
+        print(f"[*] Press Ctrl+C to stop.\n")
 
-if __name__ == "__main__":
-    asyncio.run(main()) 
+        try:
+            await asyncio.sleep(float("inf"))
+            # Keep the server alive indefinitely
+            # "inf" = infinity – runs until Ctrl+C
+        except KeyboardInterrupt:
+            pass
+        finally:
+            controller.stop()
+            print("\n[*] Listener stopped.")
+
+    asyncio.run(_run())
