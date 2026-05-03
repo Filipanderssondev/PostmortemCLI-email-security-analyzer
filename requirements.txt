@@ -1,2 +1,3 @@
-aiosmtpd==1.4.6
-dnspython==2.7.0
+aiosmtpd
+dnspython
+extract-msg

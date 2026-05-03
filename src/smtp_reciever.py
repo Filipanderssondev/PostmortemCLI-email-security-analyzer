@@ -1,13 +1,12 @@
 # src/smtp_receiver.py
 # SMTP handler – receives forwarded emails and passes them to the parser.
-# This is NOT an entrypoint. main.py starts this when "listen" is used.
+# Not an entrypoint. main.py starts this via cmd_listen().
 
 import asyncio
 from aiosmtpd.controller import Controller
 from aiosmtpd.handlers import AsyncMessage
 
 from src.parser import parse_email
-# Parser is shared – same function used in both scan and listen mode
 
 
 class PostMortemHandler(AsyncMessage):
@@ -17,9 +16,6 @@ class PostMortemHandler(AsyncMessage):
     """
 
     async def handle_message(self, message):
-        # "message" = a Python mail object, delivered by aiosmtpd
-        # Exact same type as what load_email_file() returns – parser works identically
-
         print("\n=== EMAIL RECEIVED ===")
         print(f"  From:    {message['From']}")
         print(f"  To:      {message['To']}")
@@ -27,7 +23,6 @@ class PostMortemHandler(AsyncMessage):
         print("======================")
 
         parsed = parse_email(message)
-        # Hand off to parser immediately – same pipeline as scan mode
 
         # TODO: wire into analyzer and reporter when ready
         # result = analyze(parsed)
@@ -41,7 +36,7 @@ class PostMortemHandler(AsyncMessage):
 def start_listener(host: str = "0.0.0.0", port: int = 1025):
     """
     Starts the SMTP server and blocks until Ctrl+C.
-    Called by main.py when the user runs: postmortemcli listen
+    Called by main.py when user runs: postmortemcli listen
     """
 
     async def _run():
@@ -55,8 +50,6 @@ def start_listener(host: str = "0.0.0.0", port: int = 1025):
 
         try:
             await asyncio.sleep(float("inf"))
-            # Keep the server alive indefinitely
-            # "inf" = infinity – runs until Ctrl+C
         except KeyboardInterrupt:
             pass
         finally:

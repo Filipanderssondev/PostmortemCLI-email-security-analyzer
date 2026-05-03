@@ -1,17 +1,15 @@
 # main.py
-# Entrypoint for PostmortemCLI.
-# Routes subcommands to the correct mode.
-#
+# Entrypoint for PostmortemCLI
 # Usage:
-#   postmortemcli scan <file.eml> [files...]   Scan files directly
-#   postmortemcli listen                        Start SMTP listener
+#   postmortemcli scan <file.eml> [files...]
+#   postmortemcli listen
 
 import sys
 import os
 from email import message_from_bytes
 
 from src.parser import parse_email
-from src.smtp_receiver import start_listener
+from src.smtp_reciever import start_listener
 # from src.analyzer import analyze          # Uncomment when ready
 # from src.reporter import generate_report  # Uncomment when ready
 
@@ -20,7 +18,6 @@ from src.smtp_receiver import start_listener
 def load_eml(filepath: str):
     with open(filepath, "rb") as f:
         return message_from_bytes(f.read())
-
 
 def load_msg(filepath: str):
     try:
@@ -34,7 +31,7 @@ def load_msg(filepath: str):
 
 
 def load_email_file(filepath: str):
-    """Validates and loads a .eml or .msg file. Returns a mail object."""
+    """Validates and loads a .eml or .msg file. Returns a Python mail object."""
 
     if not os.path.isfile(filepath):
         print(f"[ERROR] File not found: {filepath}")
@@ -51,10 +48,7 @@ def load_email_file(filepath: str):
         sys.exit(1)
 
 
-# ─────────────────────────────────────────
 #  Output
-# ─────────────────────────────────────────
-
 def print_summary(parsed: dict, filepath: str):
     """Prints parsed email summary. Placeholder until analyzer.py is ready."""
 
@@ -88,15 +82,11 @@ def print_summary(parsed: dict, filepath: str):
     else:
         print("  Attachments: none")
 
-    # Verdict placeholder – replaced by analyzer.py output later
     print(f"\n  VERDICT: [ pending – analyzer not yet implemented ]")
     print(f"{'='*52}\n")
 
 
-# ─────────────────────────────────────────
 #  Subcommands
-# ─────────────────────────────────────────
-
 def cmd_scan(files: list):
     """Scan one or more .eml / .msg files directly from disk."""
 
@@ -111,22 +101,17 @@ def cmd_scan(files: list):
         parsed  = parse_email(message)
         print_summary(parsed, filepath)
 
-        # When analyzer and reporter are ready:
+        # Uncomment when ready:
         # result = analyze(parsed)
         # generate_report(result)
 
 
 def cmd_listen(args: list):
-    """Start SMTP listener. Receives forwarded emails on port 1025."""
+    """Start SMTP listener on port 1025."""
     start_listener()
-    # Container stays alive until Ctrl+C
-    # Each received email runs through the same parser pipeline as scan mode
 
 
-# ─────────────────────────────────────────
 #  CLI handler
-# ─────────────────────────────────────────
-
 COMMANDS = {
     "scan":   cmd_scan,
     "listen": cmd_listen,

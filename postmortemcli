@@ -1,0 +1,15 @@
+#!/bin/bash
+IMAGE="postmortem"
+PROJECT_ROOT="$(cd "$(dirname "$0")" && pwd)"
+
+case $1 in
+    start)
+        podman run -it --rm \
+            -v $PROJECT_ROOT:/data \
+            $IMAGE \
+            bash
+        ;;
+    *)
+        echo "Usage: postmortemcli start"
+        ;;
+esac

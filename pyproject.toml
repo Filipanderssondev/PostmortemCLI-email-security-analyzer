@@ -1,0 +1,25 @@
+[build-system]
+requires      = ["setuptools"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name    = "postmortem"
+version = "0.1.0"
+description = "Email security analysis tool"
+requires-python = ">=3.10"
+dependencies = [
+    "aiosmtpd",
+    "dnspython",
+    "extract-msg",
+]
+
+[project.scripts]
+postmortemcli = "main:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+]
+# "dev" = only installed in development, not in production
+# pip install -e ".[dev]"  ← installs pytest too
+# pip install -e .         ← skips pytest (production/container)
