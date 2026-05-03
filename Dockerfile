@@ -9,11 +9,12 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
+
+ENV PYTHONPATH=/app
+# PYTHONPATH = tells Python where to look for modules
+# Without this, "from main import main" fails because
+# Python doesn't know to look in /app
+
 RUN pip install -e .
 
-# Create inbox folder inside container
-# Drop .eml/.msg files here from your laptop while container is running
-RUN mkdir -p /inbox
-
 ENTRYPOINT ["postmortemcli"]
-CMD ["--help"]
