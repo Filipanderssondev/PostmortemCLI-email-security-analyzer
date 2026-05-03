@@ -1,15 +1,24 @@
 #!/bin/bash
+# postmortemcli
+# Starts the container and drops you into interactive terminal
+
 IMAGE="postmortem"
 PROJECT_ROOT="$(cd "$(dirname "$0")" && pwd)"
 
 case $1 in
     start)
         podman run -it --rm \
-            -v $PROJECT_ROOT:/data \
+            -v "$PROJECT_ROOT:/data" \
             $IMAGE \
             bash
+        # -it          = interactive terminal
+        # --rm         = self destruct on exit
+        # -v           = mount your entire project folder as /data
+        #                so ALL your local files are visible inside
         ;;
     *)
+        echo ""
         echo "Usage: postmortemcli start"
+        echo ""
         ;;
 esac
