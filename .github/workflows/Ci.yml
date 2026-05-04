@@ -73,8 +73,8 @@ jobs:
           context: .
           push: true
           tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/postmortem:latest
-            ${{ secrets.DOCKERHUB_USERNAME }}/postmortem:${{ github.sha }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/postmortemcli:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/postmortemcli:${{ github.sha }}
           # Two tags on every push:
           # :latest      = always points to the newest build
           # :abc1234     = the exact git commit that built it
