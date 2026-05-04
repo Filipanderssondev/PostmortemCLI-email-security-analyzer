@@ -1,20 +1,17 @@
 FROM python:3.12-slim
 
-RUN apk add --no-cache gcc musl-dev libffi-dev
+RUN apt-get update && apt-get install -y \
+    gcc \
+    libffi-dev \
+    && rm -rf /var/lib/apt/lists/*
+# apt-get = Debian's package manager (slim is Debian-based)
+# rm -rf /var/lib/apt/lists/* = clean up cache, keeps image size small
 
 WORKDIR /app
-
 COPY pyproject.toml .
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-
 COPY . .
-
 ENV PYTHONPATH=/app
-# PYTHONPATH = tells Python where to look for modules
-# Without this, "from main import main" fails because
-# Python doesn't know to look in /app
-
 RUN pip install -e .
-
 ENTRYPOINT ["postmortemcli"]

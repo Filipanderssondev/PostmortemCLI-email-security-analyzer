@@ -1,60 +1,83 @@
 # .github/workflows/ci.yml
 # Runs automatically on every push and pull request to main.
-# Checks: tests pass + Docker image builds successfully.
+# Jobs: tests pass → Docker image builds → pushes to Docker Hub
 
 name: PostmortemCLI CI
 
 on:
   push:
     branches: ["**"]
-  # "**" = every branch, including feature branches
   pull_request:
     branches: [main]
 
-
 jobs:
 
-#  JOB 1 – Run tests
+  #  Job 1 – Run tests
   test:
     name: Run tests
     runs-on: ubuntu-latest
-    # GitHub provides a free Ubuntu machine to run this on
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        # Downloads your repo onto the GitHub machine
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-        # Installs Python 3.12 on the GitHub machine
 
       - name: Install dependencies
         run: pip install -e ".[dev]"
-        # Installs your project + all dependencies
-        # Same as running pip install -e . locally
 
       - name: Run tests
         run: pytest tests/ -v
-        # Runs all test files in tests/
-        # -v = verbose, shows each test by name
-        # If any test fails → this job fails → you get an email
 
-#  JOB 2 – Build Docker image
+
+  # ─────────────────────────────────────────
+  #  JOB 2 – Build and push Docker image
+  # ─────────────────────────────────────────
   build:
-    name: Build container image
+    name: Build and push container image
     runs-on: ubuntu-latest
     needs: test
-    # "needs: test" = only runs if job 1 passed
-    # No point building if tests are broken
+    # Only runs if tests passed
+    # No point pushing a broken image
+
+    # Only push on main – not on every feature branch
+    # Build runs on all branches, push only on main
+    if: github.ref == 'refs/heads/main'
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Build image
-        run: docker build -t postmortem .
-        # Builds your Dockerfile
-        # If the build fails → this job fails → you get notified
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          # Secrets are stored in GitHub – never visible in logs
+          # ${{ secrets.X }} = GitHub reads the value from your repo settings
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        # Buildx = extended Docker build with caching support
+        # Makes subsequent builds significantly faster
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/postmortem:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/postmortem:${{ github.sha }}
+          # Two tags on every push:
+          # :latest      = always points to the newest build
+          # :abc1234     = the exact git commit that built it
+          #                lets you roll back to any previous version
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # gha = GitHub Actions cache
+          # Stores Docker layers between runs
+          # First build: slow. Every build after: fast.
