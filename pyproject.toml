@@ -3,29 +3,17 @@ requires      = ["setuptools>=64"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name    = "postmortemcli"
-version = "0.1.0"
-description = "Email security analysis tool"
+name            = "postmortemcli"
+version         = "2.0.1"
+description     = "Email security analysis tool – containerized CLI for structured threat detection"
 requires-python = ">=3.10"
-dependencies = [
-    "aiosmtpd",
-    "dnspython",
-    "extract-msg",
-]
+dependencies    = []
+
+[tool.setuptools]
+py-modules = ["launcher", "main"]
 
 [project.scripts]
-postmortemcli = "main:main"
+postmortemcli = "launcher:main"
 
 [project.optional-dependencies]
-dev = [
-    "pytest",
-]
-# "dev" = only installed in development, not in production
-# pip install -e ".[dev]"  ← installs pytest too
-# pip install -e .         ← skips pytest (production/container)
-
-[tool.pytest.ini_options]
-pythonpath = ["."]
-# "." = project root
-# tells pytest to look for modules starting from here
-# so "from src.parser import..." resolves correctly
+dev = ["pytest", "aiosmtpd", "dnspython", "extract-msg"]

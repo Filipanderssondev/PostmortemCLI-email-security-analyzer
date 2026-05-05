@@ -1,0 +1,16 @@
+launcher.py
+.git
+.gitignore
+.github/
+tests/
+.pytest_cache/
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+.env
+docs/
+*.md
+.vscode/
+.idea/
+*.egg-info/

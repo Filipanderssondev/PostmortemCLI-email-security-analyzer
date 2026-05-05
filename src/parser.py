@@ -1,17 +1,18 @@
 # src/parser.py
-# Parses a Python mail object into a structured dict.
-# Used by both scan mode (files) and listen mode (SMTP).
+# Parses a Python mail object into a structured dict
 # Input:  Python email.message.Message object
 # Output: { headers, body, attachments, urls }
 
 import re
 from email.header import decode_header
 
+from src.logger import get_logger
+
+logger = get_logger(__name__)
+
 
 def decode_subject(raw_subject):
-    """Decodes encoded email subjects into readable strings.
-    Example: '=?utf-8?b?SGVsbG8=?=' → 'Hello'
-    """
+    """Decodes encoded email subjects into readable strings."""
     if not raw_subject:
         return ""
 
@@ -32,6 +33,8 @@ def extract_urls(text):
 def parse_email(message):
     """Main parsing function. Takes a mail object, returns structured dict."""
 
+    logger.debug("Starting email parse")
+
     headers = {
         "from":       message.get("From", ""),
         "to":         message.get("To", ""),
@@ -41,6 +44,8 @@ def parse_email(message):
         "received":   message.get_all("Received", []),
         "date":       message.get("Date", ""),
     }
+
+    logger.debug(f"Headers extracted – From: {headers['from']}, Subject: {headers['subject']}")
 
     body_text   = ""
     body_html   = ""
@@ -52,25 +57,31 @@ def parse_email(message):
         disposition  = part.get_content_disposition()
 
         if disposition == "attachment":
-            payload = part.get_payload(decode=True) or b""
+            payload  = part.get_payload(decode=True) or b""
+            filename = part.get_filename() or "unknown_file"
             attachments.append({
-                "filename":     part.get_filename() or "unknown_file",
+                "filename":     filename,
                 "content_type": content_type,
                 "data":         payload,
                 "size":         len(payload)
             })
+            logger.debug(f"Attachment found: {filename} ({content_type}, {len(payload)} bytes)")
 
         elif content_type == "text/plain" and disposition != "attachment":
             payload   = part.get_payload(decode=True) or b""
             body_text = payload.decode("utf-8", errors="replace")
             urls     += extract_urls(body_text)
+            logger.debug(f"Plain text body – {len(body_text)} chars")
 
         elif content_type == "text/html" and disposition != "attachment":
             payload   = part.get_payload(decode=True) or b""
             body_html = payload.decode("utf-8", errors="replace")
             urls     += extract_urls(body_html)
+            logger.debug(f"HTML body – {len(body_html)} chars")
 
     urls = list(set(urls))
+
+    logger.info(f"Parse complete – {len(attachments)} attachments, {len(urls)} URLs")
 
     return {
         "headers":     headers,
