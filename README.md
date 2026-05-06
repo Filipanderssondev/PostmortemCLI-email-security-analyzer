@@ -13,6 +13,7 @@
                     ╚██████╗███████╗██║
                      ╚═════╝╚══════╝╚═╝
 
+                    POSTMORTEMCLI v.0.2.1-alpha
                        by Filip Andersson, 2026
                   Email Security Analysis Tool for SMHI
 ```

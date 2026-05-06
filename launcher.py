@@ -29,6 +29,16 @@ def get_image() -> str:
     )
 
 
+def is_private_registry() -> bool:
+    """
+    Detects if the configured image is from a private registry.
+    Public registries are pulled automatically.
+    Private registries require manual login and pull – local image is used.
+    """
+    public_registries = ["docker.io", "ghcr.io", "registry.hub.docker.com", "quay.io"]
+    return not any(registry in get_image() for registry in public_registries)
+
+
 def get_mount_path() -> str:
     cwd = os.getcwd()
     if sys.platform == "win32":
@@ -48,8 +58,13 @@ def run_container(args: list):
             print("        Install podman or docker.")
         sys.exit(1)
 
+    pull_flag = ["--pull", "never"] if is_private_registry() else []
+    # Private registry: use local image only – manual pull required
+    # Public registry: pull automatically on first run
+
     cmd = [
         runtime, "run", "-it", "--rm",
+        *pull_flag,
         "-v", f"{get_mount_path()}:/data",
         "-p", "1025:1025",
         get_image(),
