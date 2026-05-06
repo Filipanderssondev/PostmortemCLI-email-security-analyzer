@@ -14,3 +14,4 @@ docs/
 .vscode/
 .idea/
 *.egg-info/
+smhi-setup/

@@ -26,9 +26,11 @@ class PostMortemHandler(AsyncMessage):
         logger.info(f"SMTP parse complete – URLs: {len(parsed['urls'])}, Attachments: {len(parsed['attachments'])}")
 
         print("\n=== EMAIL RECEIVED VIA SMTP ===")
-        print(f"  From:         {message['From']}")
-        print(f"  To:           {message['To']}")
-        print(f"  Subject:      {message['Subject']}")
+        print(f"  From:         {parsed['headers']['from']}")
+        print(f"  To:           {parsed['headers']['to']}")
+        print(f"  Subject:      {parsed['headers']['subject']}")
+        # Uses parsed headers which run through decode_subject()
+        # Correctly decodes encoded subjects like =?UTF-8?Q?...?=
         print(f"  URLs found:   {len(parsed['urls'])}")
         print(f"  Attachments:  {len(parsed['attachments'])}")
         print("================================\n")
