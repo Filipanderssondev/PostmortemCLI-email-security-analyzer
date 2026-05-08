@@ -14,7 +14,7 @@ logger = get_logger(__name__)
 _VERDICT_SYMBOL = {
     'MOST LIKELY SAFE':                    '✓',
     'MOST LIKELY UNSAFE':                   '✗',
-    'FURTHER ANALYSIS REQUIRED...': '?',
+    'FURTHER ANALYSIS REQUIRED': '?',
 }
 
 

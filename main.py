@@ -20,9 +20,9 @@ from src.smtp_reciever import start_listener
 logger = get_logger(__name__)
 
 _VERDICT_SYMBOL = {
-    'SÄKERT':                    '✓',
-    'OSÄKERT':                   '✗',
-    'YTTERLIGARE ANALYS BEHÖVS': '?',
+    'MOST LIKELY SAFE':                    '✓',
+    'MOST LIKELY UNSAFE':                   '✗',
+    'FURTHER ANALYSIS REQUIRED': '?',
 }
 
 

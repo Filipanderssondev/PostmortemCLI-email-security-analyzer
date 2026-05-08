@@ -4,7 +4,20 @@
 # All external calls send only hashes or IP addresses – never raw content.
 # Stateless: no data is stored or retained after analyze() returns.
 # Returns structured result dict with verdict: SÄKERT / OSÄKERT / YTTERLIGARE ANALYS BEHÖVS
+#
+# External threat sources:
+#   Spamhaus ZEN      – IP blocklist via DNSBL          (free, fair use)
+#   Spamhaus DBL      – domain blocklist via DNSBL       (free, fair use)
+#   URLhaus           – malicious URL database           (free, fair use)
+#   MalwareBazaar     – malware hash database            (free, fair use)
+#   ThreatFox         – IOC database: IPs, domains, hashes (free, no key)
+#   AbuseIPDB         – IP abuse confidence score        (free tier, API key required)
+#
+# Required env vars:
+#   ABUSEIPDB_API_KEY  – free key from https://www.abuseipdb.com/register
+#                        If unset, AbuseIPDB checks are skipped gracefully.
 
+import os
 import re
 import hashlib
 import requests
@@ -20,8 +33,12 @@ except ImportError:
 
 logger = get_logger(__name__)
 
-_TIMEOUT = 5
+_TIMEOUT  = 5
 _MAX_URLS = 15
+
+# AbuseIPDB thresholds (0–100 confidence score)
+_ABUSEIPDB_MALICIOUS  = 80   # → OSÄKERT
+_ABUSEIPDB_SUSPICIOUS = 25   # → YTTERLIGARE ANALYS BEHÖVS
 
 DANGEROUS_EXTENSIONS = frozenset({
     '.exe', '.bat', '.cmd', '.ps1', '.vbs', '.js', '.jse', '.hta',
@@ -153,13 +170,60 @@ def _malwarebazaar(sha256_hash: str) -> bool:
         return False
 
 
+def _threatfox(ioc: str) -> bool:
+    """
+    Checks any IOC (IP, domain, URL, file hash) against ThreatFox.
+    ThreatFox tracks malware C2 servers, ransomware infrastructure,
+    and botnet addresses. No API key required.
+    Returns True if the IOC is a known malicious indicator.
+    """
+    if not ioc:
+        return False
+    try:
+        r = requests.post(
+            'https://threatfox-api.abuse.ch/api/v1/',
+            json={'query': 'search_ioc', 'search_term': ioc},
+            timeout=_TIMEOUT,
+        )
+        return r.status_code == 200 and r.json().get('query_status') == 'ok'
+    except Exception:
+        return False
+
+
+def _abuseipdb(ip: str) -> int:
+    """
+    Returns AbuseIPDB confidence score (0–100) for an IP address.
+    0   = never reported / clean
+    100 = confirmed malicious with high confidence
+    -1  = key not configured or request failed (treated as unknown)
+
+    Requires ABUSEIPDB_API_KEY environment variable.
+    Free tier: 1,000 checks/day. Register at https://www.abuseipdb.com/register
+    """
+    key = os.environ.get('ABUSEIPDB_API_KEY', '')
+    if not key:
+        return -1
+    try:
+        r = requests.get(
+            'https://api.abuseipdb.com/api/v2/check',
+            headers={'Key': key, 'Accept': 'application/json'},
+            params={'ipAddress': ip, 'maxAgeInDays': '90'},
+            timeout=_TIMEOUT,
+        )
+        if r.status_code == 200:
+            return int(r.json().get('data', {}).get('abuseConfidenceScore', 0))
+        return -1
+    except Exception:
+        return -1
+
+
 # ── Check functions ───────────────────────────────────────────────────────────
 
 def check_headers(headers: dict) -> dict:
-    from_domain      = _extract_domain(headers.get('from', ''))
-    reply_domain     = _extract_domain(headers.get('reply_to', ''))
-    return_path_dom  = _extract_domain(headers.get('return_path', ''))
-    sender_ip        = _extract_sender_ip(headers.get('received', []))
+    from_domain     = _extract_domain(headers.get('from', ''))
+    reply_domain    = _extract_domain(headers.get('reply_to', ''))
+    return_path_dom = _extract_domain(headers.get('return_path', ''))
+    sender_ip       = _extract_sender_ip(headers.get('received', []))
 
     flags = []
 
@@ -261,24 +325,74 @@ def check_authentication(domain: str, raw_bytes: bytes = b'') -> dict:
 
 
 def check_reputation(ip: str) -> dict:
+    """
+    Checks sender IP against:
+      - Spamhaus ZEN DNSBL  (binary listed/clean)
+      - ThreatFox            (known C2/malware infrastructure)
+      - AbuseIPDB            (0–100 confidence score, requires API key)
+    """
+    empty = {
+        'ip':             ip,
+        'spamhaus_zen':   False,
+        'threatfox_ip':   False,
+        'abuseipdb_score': -1,
+        'flags':          [],
+    }
+
     if not ip or _PRIVATE_IP.match(ip):
-        return {'ip': ip, 'spamhaus_zen': False, 'flags': []}
+        return empty
+
+    flags = []
 
     reversed_ip = '.'.join(reversed(ip.split('.')))
     on_zen      = _dnsbl(reversed_ip, 'zen.spamhaus.org')
-    flags       = [f'Sender IP {ip} is listed on Spamhaus ZEN'] if on_zen else []
+    if on_zen:
+        flags.append(f'Sender IP {ip} listed on Spamhaus ZEN')
 
-    logger.info(f'Reputation: ip={ip} | zen={"LISTED" if on_zen else "clean"}')
-    return {'ip': ip, 'spamhaus_zen': on_zen, 'flags': flags}
+    tf_hit = _threatfox(ip)
+    if tf_hit:
+        flags.append(f'Sender IP {ip} found in ThreatFox (known C2/malware infrastructure)')
+
+    score = _abuseipdb(ip)
+    if score >= _ABUSEIPDB_MALICIOUS:
+        flags.append(f'Sender IP {ip} has AbuseIPDB confidence score {score}/100')
+    elif score >= _ABUSEIPDB_SUSPICIOUS:
+        flags.append(f'Sender IP {ip} has elevated AbuseIPDB score {score}/100')
+
+    logger.info(
+        f'Reputation: ip={ip} | '
+        f'zen={"LISTED" if on_zen else "clean"} | '
+        f'threatfox={"HIT" if tf_hit else "clean"} | '
+        f'abuseipdb={score if score != -1 else "not configured"}'
+    )
+
+    return {
+        'ip':              ip,
+        'spamhaus_zen':    on_zen,
+        'threatfox_ip':    tf_hit,
+        'abuseipdb_score': score,
+        'flags':           flags,
+    }
 
 
 def check_urls(urls: list) -> dict:
+    """
+    Checks each URL against:
+      - URLhaus       (malware distribution URLs)
+      - Spamhaus DBL  (domain blocklist)
+      - ThreatFox     (malicious domain infrastructure)
+    """
     results = []
     flags   = []
     targets = list(dict.fromkeys(urls))[:_MAX_URLS]
 
     for url in targets:
-        entry = {'url': url, 'urlhaus': False, 'spamhaus_dbl': False}
+        entry = {
+            'url':            url,
+            'urlhaus':        False,
+            'spamhaus_dbl':   False,
+            'threatfox_domain': False,
+        }
 
         if _urlhaus(url):
             entry['urlhaus'] = True
@@ -287,38 +401,54 @@ def check_urls(urls: list) -> dict:
         m = re.search(r'https?://([^/?\s]+)', url)
         if m:
             domain = m.group(1).lower().rstrip('.')
+
             if _dnsbl(domain, 'dbl.spamhaus.org'):
                 entry['spamhaus_dbl'] = True
                 flags.append(f'URL domain on Spamhaus DBL: {domain}')
 
+            if _threatfox(domain):
+                entry['threatfox_domain'] = True
+                flags.append(f'URL domain found in ThreatFox: {domain}')
+
         results.append(entry)
 
-    urlhaus_hits = sum(1 for r in results if r['urlhaus'])
-    dbl_hits     = sum(1 for r in results if r['spamhaus_dbl'])
+    urlhaus_hits   = sum(1 for r in results if r['urlhaus'])
+    dbl_hits       = sum(1 for r in results if r['spamhaus_dbl'])
+    threatfox_hits = sum(1 for r in results if r['threatfox_domain'])
 
     logger.info(
         f'URL check: {len(targets)}/{len(urls)} checked | '
-        f'urlhaus={urlhaus_hits} | dbl={dbl_hits}'
+        f'urlhaus={urlhaus_hits} | dbl={dbl_hits} | threatfox={threatfox_hits}'
     )
 
     return {
-        'total':       len(urls),
-        'checked':     len(targets),
-        'results':     results,
-        'urlhaus_hits': urlhaus_hits,
-        'dbl_hits':    dbl_hits,
-        'flags':       flags,
+        'total':          len(urls),
+        'checked':        len(targets),
+        'results':        results,
+        'urlhaus_hits':   urlhaus_hits,
+        'dbl_hits':       dbl_hits,
+        'threatfox_hits': threatfox_hits,
+        'flags':          flags,
     }
 
 
 def check_attachments(attachments: list) -> dict:
+    """
+    For each attachment:
+      - SHA256 hash
+      - MalwareBazaar hash lookup
+      - ThreatFox hash lookup
+      - Dangerous extension check
+      - MIME magic byte vs declared content-type mismatch
+    Only hashes are sent externally – raw bytes never leave the container.
+    """
     results = []
     flags   = []
 
     for att in attachments:
-        data      = att.get('data', b'')
-        filename  = att.get('filename', 'unknown')
-        declared  = att.get('content_type', '').lower()
+        data     = att.get('data', b'')
+        filename = att.get('filename', 'unknown')
+        declared = att.get('content_type', '').lower()
 
         sha256_hash   = _sha256(data) if data else ''
         ext_match     = re.search(r'\.[a-zA-Z0-9]{1,10}$', filename)
@@ -331,9 +461,12 @@ def check_attachments(attachments: list) -> dict:
             declared not in detected_mime
         )
         mb_hit = _malwarebazaar(sha256_hash) if sha256_hash else False
+        tf_hit = _threatfox(sha256_hash)     if sha256_hash else False
 
         if mb_hit:
             flags.append(f'Attachment {filename} ({sha256_hash[:16]}…) found in MalwareBazaar')
+        if tf_hit:
+            flags.append(f'Attachment {filename} ({sha256_hash[:16]}…) found in ThreatFox')
         if dangerous:
             flags.append(f'Dangerous attachment extension: {filename} ({extension})')
         if mime_mismatch:
@@ -351,23 +484,29 @@ def check_attachments(attachments: list) -> dict:
             'dangerous':     dangerous,
             'mime_mismatch': mime_mismatch,
             'malwarebazaar': mb_hit,
+            'threatfox':     tf_hit,
             'size':          att.get('size', 0),
         })
 
         logger.debug(
-            f'Attachment: {filename} | '
-            f'sha256={sha256_hash[:16]}… | '
-            f'mb={mb_hit} | dangerous={dangerous} | mime_mismatch={mime_mismatch}'
+            f'Attachment: {filename} | sha256={sha256_hash[:16]}… | '
+            f'mb={mb_hit} | tf={tf_hit} | '
+            f'dangerous={dangerous} | mime_mismatch={mime_mismatch}'
         )
 
     mb_hits = sum(1 for r in results if r['malwarebazaar'])
-    logger.info(f'Attachment check: {len(results)} file(s) | mb_hits={mb_hits}')
+    tf_hits = sum(1 for r in results if r['threatfox'])
+    logger.info(
+        f'Attachment check: {len(results)} file(s) | '
+        f'mb_hits={mb_hits} | tf_hits={tf_hits}'
+    )
 
     return {
-        'count':            len(results),
-        'results':          results,
+        'count':              len(results),
+        'results':            results,
         'malwarebazaar_hits': mb_hits,
-        'flags':            flags,
+        'threatfox_hits':     tf_hits,
+        'flags':              flags,
     }
 
 
@@ -380,16 +519,22 @@ def _calculate_verdict(
     url_f:    dict,
     att_f:    dict,
 ) -> str:
+    abuseipdb_score = rep_f.get('abuseipdb_score', -1)
+
     if any([
         header_f['reply_mismatch'],
         header_f['return_path_mismatch'],
         rep_f['spamhaus_zen'],
-        url_f['urlhaus_hits'] > 0,
-        url_f['dbl_hits'] > 0,
-        att_f['malwarebazaar_hits'] > 0,
+        rep_f.get('threatfox_ip', False),
+        abuseipdb_score != -1 and abuseipdb_score >= _ABUSEIPDB_MALICIOUS,
+        url_f['urlhaus_hits']        > 0,
+        url_f['dbl_hits']            > 0,
+        url_f['threatfox_hits']      > 0,
+        att_f['malwarebazaar_hits']  > 0,
+        att_f['threatfox_hits']      > 0,
         auth_f['dkim']['signature_present'] and auth_f['dkim']['signature_valid'] is False,
     ]):
-        return 'OSÄKERT'
+        return 'MOST LIKELY UNSAFE'
 
     missing_auth = sum([
         auth_f['spf']['result']   == 'missing',
@@ -398,24 +543,25 @@ def _calculate_verdict(
     ])
 
     if missing_auth >= 2:
-        return 'OSÄKERT'
+        return 'MOST LIKELY UNSAFE'
 
     uncertain = any([
         missing_auth == 1,
         auth_f['dmarc']['policy'] == 'none',
         header_f['mid_mismatch'],
         header_f['no_received'],
-        any(r['dangerous'] for r in att_f['results']),
+        abuseipdb_score != -1 and abuseipdb_score >= _ABUSEIPDB_SUSPICIOUS,
+        any(r['dangerous']     for r in att_f['results']),
         any(r['mime_mismatch'] for r in att_f['results']),
     ])
 
     if uncertain:
-        return 'YTTERLIGARE ANALYS BEHÖVS'
+        return 'FURTHER ANALYSIS REQUIRED'
 
     if missing_auth == 0 and auth_f['dmarc']['policy'] in ('reject', 'quarantine'):
-        return 'SÄKERT'
+        return 'MOST LIKELY SAFE'
 
-    return 'YTTERLIGARE ANALYS BEHÖVS'
+    return 'FURTHER ANALYSIS REQUIRED'
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
