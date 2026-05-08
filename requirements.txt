@@ -1,3 +1,5 @@
 aiosmtpd
 dnspython
 extract-msg
+dkimpy 
+requests
