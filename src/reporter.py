@@ -4,9 +4,8 @@
 #
 # Delivery:
 #   1. Printed to terminal
-#   2. Saved to /tmp/postmortem/reports/<timestamp>.txt
-#   3. SMTP (optional): REPORT_SMTP_HOST, REPORT_SMTP_PORT, REPORT_FROM_ADDR
-
+#   2. SMTP (optional): REPORT_SMTP_HOST, REPORT_SMTP_PORT, REPORT_FROM_ADDR
+ 
 import os
 import smtplib
 import textwrap
