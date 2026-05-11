@@ -15,7 +15,7 @@ from src.logger import get_logger
 from src.parser import parse_email
 from src.analyzer import analyze
 from src.smtp_reciever import start_listener
-# from src.reporter import generate_report  # Uncomment when ready
+from src.reporter import report
 
 logger = get_logger(__name__)
 
@@ -177,7 +177,7 @@ def cmd_scan(files: list):
 
         result = analyze(parsed, raw_bytes=raw_bytes)
         print_result(parsed, filepath, result)
-        # generate_report(result)  # Uncomment when reporter.py is ready
+        report(parsed, result)
 
 
 def cmd_listen(args: list):
@@ -240,9 +240,8 @@ def cmd_start(args: list):
                        by Filip Andersson, 2026
                   Email Security Analysis Tool for SMHI
     """)
-
-    print('  SMTP listener running on port 1025')
-    print('  Forward suspicious emails to: scan@localhost')
+    print(f'[*] SMTP endpoint: localhost:1025')
+    print(f'[*] Submit emails using: postmortemcli send <file.eml>\n')
     print("  Type 'help' for available commands. Type 'exit' to quit.\n")
 
     while True:
@@ -264,7 +263,7 @@ def cmd_start(args: list):
                 print("""
   Commands:
     scan <file> [files...]   Analyze one or more email files (.eml or .msg)
-    send <file> [files...]   Send files to SMTP listener
+    send <file> [files...]   Send files to SMTP listener (.eml or .msg)
     listen                   Restart SMTP listener
     help                     Show this message
     exit                     Quit and destroy container
@@ -285,9 +284,9 @@ def cmd_start(args: list):
 
 COMMANDS = {
     'start':  cmd_start,
-    'scan':   cmd_scan,
     'listen': cmd_listen,
     'send':   cmd_send,
+    'scan':   cmd_scan,
 }
 
 USAGE = """
@@ -301,9 +300,10 @@ Usage:
 
 Examples:
   postmortemcli start
-  postmortemcli scan /data/suspicious.eml
-  postmortemcli scan /data/a.eml /data/b.msg
-  postmortemcli send tests/phishing_email.eml
+
+  FILE ANALYSIS: ( drag file or paste filepath here )
+  postmortemcli scan /data/email.eml /data/email.msg
+  postmortemcli send /path/to/email.eml /path/to/email.msg ( drag file or paste filepath here ) 
 """
 
 

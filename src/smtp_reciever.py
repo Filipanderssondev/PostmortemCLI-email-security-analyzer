@@ -8,6 +8,7 @@ from aiosmtpd.controller import Controller
 from src.parser import parse_email
 from src.analyzer import analyze
 from src.logger import get_logger
+from src.reporter import report
 
 logger = get_logger(__name__)
 
@@ -29,8 +30,10 @@ class PostMortemHandler:
         result = analyze(parsed, raw_bytes=raw_bytes)
 
         _print_result(parsed, result)
+        from email.utils import parseaddr
+        _, sender_addr = parseaddr(parsed['headers'].get('from', ''))
+        report(parsed, result, send_to=sender_addr)
         return '250 OK'
-
 
 def _print_result(parsed: dict, result: dict):
     verdict = result['verdict']
