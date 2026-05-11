@@ -1,603 +1,502 @@
-# src/analyzer.py
-# Analyzes a parsed email dict from parser.py.
-# Checks: headers, SPF/DKIM/DMARC, IP reputation, URLs, attachments.
-# All external calls send only hashes or IP addresses – never raw content.
-# Stateless: no data is stored or retained after analyze() returns.
-# Returns structured result dict with verdict: SÄKERT / OSÄKERT / YTTERLIGARE ANALYS BEHÖVS
+# src/reporter.py
+# Generates a structured security analysis report.
+# Structure: metadata → checks (in order) → flags → sources → verdict
 #
-# External threat sources:
-#   Spamhaus ZEN      – IP blocklist via DNSBL          (free, fair use)
-#   Spamhaus DBL      – domain blocklist via DNSBL       (free, fair use)
-#   URLhaus           – malicious URL database           (free, fair use)
-#   MalwareBazaar     – malware hash database            (free, fair use)
-#   ThreatFox         – IOC database: IPs, domains, hashes (free, no key)
-#   AbuseIPDB         – IP abuse confidence score        (free tier, API key required)
-#
-# Required env vars:
-#   ABUSEIPDB_API_KEY  – free key from https://www.abuseipdb.com/register
-#                        If unset, AbuseIPDB checks are skipped gracefully.
+# Delivery:
+#   1. Printed to terminal
+#   2. Saved to /tmp/postmortem/reports/<timestamp>.txt
+#   3. SMTP (optional): REPORT_SMTP_HOST, REPORT_SMTP_PORT, REPORT_FROM_ADDR
 
 import os
-import re
-import hashlib
-import requests
-import dns.resolver
-from email.utils import parseaddr
+import smtplib
+import textwrap
+from datetime import datetime, timezone
+from email.mime.text import MIMEText
 from src.logger import get_logger
 
-try:
-    import dkim as _dkim
-    _DKIM_AVAILABLE = True
-except ImportError:
-    _DKIM_AVAILABLE = False
-
-logger = get_logger(__name__)
-
-_TIMEOUT  = 5
-_MAX_URLS = 15
-
-# AbuseIPDB thresholds (0–100 confidence score)
-_ABUSEIPDB_MALICIOUS  = 80   # → OSÄKERT
-_ABUSEIPDB_SUSPICIOUS = 25   # → YTTERLIGARE ANALYS BEHÖVS
-
-DANGEROUS_EXTENSIONS = frozenset({
-    '.exe', '.bat', '.cmd', '.ps1', '.vbs', '.js', '.jse', '.hta',
-    '.msi', '.scr', '.pif', '.com', '.lnk', '.wsf', '.jar', '.dll',
-    '.docm', '.xlsm', '.pptm', '.iso', '.img', '.vhd',
-})
-
-DKIM_SELECTORS = [
-    'default', 'mail', 'google', 'k1', 'k2',
-    'selector1', 'selector2', 'dkim', 'email', 's1', 's2',
-]
-
-_PRIVATE_IP = re.compile(
-    r'^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|127\.|169\.254\.)'
-)
-
-_MIME_MAGIC = {
-    b'\x4d\x5a':         'application/x-msdownload',
-    b'\x7fELF':          'application/x-elf',
-    b'%PDF':             'application/pdf',
-    b'PK\x03\x04':       'application/zip',
-    b'PK\x05\x06':       'application/zip',
-    b'Rar!':             'application/x-rar-compressed',
-    b'\x1f\x8b':         'application/gzip',
-    b'#!':               'application/x-sh',
-    b'\xca\xfe\xba\xbe': 'application/java',
-}
-
-_SPAM_TOOLS = frozenset({'ratware', 'mass mailer', 'advance mailer', 'dark mailer'})
+logger      = get_logger(__name__)
+_VERSION    = '0.2.0-beta'
+_REPORT_DIR = '/tmp/postmortem/reports'
+_W          = 64   # line width
 
 
-# ── Internal helpers ──────────────────────────────────────────────────────────
+# ── Formatting ────────────────────────────────────────────────────────────────
 
-def _extract_domain(field: str) -> str:
-    _, addr = parseaddr(field)
-    if '@' in addr:
-        return addr.split('@')[-1].lower().strip()
-    return ''
+def _rule(char='─'): return char * _W
 
+def _title(text, char='═'):
+    return f'{char * _W}\n  {text}\n{char * _W}'
 
-def _extract_sender_ip(received_list: list) -> str:
-    if not received_list:
-        return ''
-    match = re.search(r'\[(\d{1,3}(?:\.\d{1,3}){3})\]', received_list[-1])
-    return match.group(1) if match else ''
+def _section(text):
+    return f'\n{_rule()}\n  {text}\n{_rule()}'
 
+def _row(label, value, w=22):
+    return f'  {label:<{w}} {value}'
 
-def _sha256(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
+def _check_row(label, value, w=26):
+    return f'    {label:<{w}} {value}'
 
-
-def _detect_mime(data: bytes) -> str | None:
-    for magic, mime in _MIME_MAGIC.items():
-        if data[:len(magic)] == magic:
-            return mime
-    return None
-
-
-def _resolve_txt(domain: str) -> list[str]:
-    try:
-        answers = dns.resolver.resolve(domain, 'TXT', lifetime=_TIMEOUT)
-        return [b''.join(r.strings).decode('utf-8', errors='replace') for r in answers]
-    except Exception:
-        return []
-
-
-def _lookup_spf(domain: str) -> str | None:
-    for r in _resolve_txt(domain):
-        if r.startswith('v=spf1'):
-            return r
-    return None
-
-
-def _lookup_dmarc(domain: str) -> str | None:
-    for r in _resolve_txt(f'_dmarc.{domain}'):
-        if r.startswith('v=DMARC1'):
-            return r
-    return None
-
-
-def _lookup_dkim_record(domain: str) -> tuple[str | None, str]:
-    for selector in DKIM_SELECTORS:
-        for r in _resolve_txt(f'{selector}._domainkey.{domain}'):
-            if 'v=DKIM1' in r or 'p=' in r:
-                return r, selector
-    return None, ''
-
-
-def _verify_dkim(raw_bytes: bytes) -> bool | None:
-    if not _DKIM_AVAILABLE or not raw_bytes:
-        return None
-    try:
-        return bool(_dkim.verify(raw_bytes))
-    except Exception:
-        return None
-
-
-def _dnsbl(host: str, zone: str) -> bool:
-    try:
-        dns.resolver.resolve(f'{host}.{zone}', 'A', lifetime=_TIMEOUT)
-        return True
-    except dns.resolver.NXDOMAIN:
-        return False
-    except Exception:
-        return False
-
-
-def _urlhaus(url: str) -> bool:
-    try:
-        r = requests.post(
-            'https://urlhaus-api.abuse.ch/v1/url/',
-            data={'url': url},
-            timeout=_TIMEOUT,
-        )
-        return r.status_code == 200 and r.json().get('query_status') == 'is_url'
-    except Exception:
-        return False
-
-
-def _malwarebazaar(sha256_hash: str) -> bool:
-    try:
-        r = requests.post(
-            'https://mb-api.abuse.ch/api/v1/',
-            data={'query': 'get_info', 'hash': sha256_hash},
-            timeout=_TIMEOUT,
-        )
-        return r.status_code == 200 and r.json().get('query_status') == 'ok'
-    except Exception:
-        return False
-
-
-def _threatfox(ioc: str) -> bool:
-    """
-    Checks any IOC (IP, domain, URL, file hash) against ThreatFox.
-    ThreatFox tracks malware C2 servers, ransomware infrastructure,
-    and botnet addresses. No API key required.
-    Returns True if the IOC is a known malicious indicator.
-    """
-    if not ioc:
-        return False
-    try:
-        r = requests.post(
-            'https://threatfox-api.abuse.ch/api/v1/',
-            json={'query': 'search_ioc', 'search_term': ioc},
-            timeout=_TIMEOUT,
-        )
-        return r.status_code == 200 and r.json().get('query_status') == 'ok'
-    except Exception:
-        return False
-
-
-def _abuseipdb(ip: str) -> int:
-    """
-    Returns AbuseIPDB confidence score (0–100) for an IP address.
-    0   = never reported / clean
-    100 = confirmed malicious with high confidence
-    -1  = key not configured or request failed (treated as unknown)
-
-    Requires ABUSEIPDB_API_KEY environment variable.
-    Free tier: 1,000 checks/day. Register at https://www.abuseipdb.com/register
-    """
-    key = os.environ.get('ABUSEIPDB_API_KEY', '')
-    if not key:
-        return -1
-    try:
-        r = requests.get(
-            'https://api.abuseipdb.com/api/v2/check',
-            headers={'Key': key, 'Accept': 'application/json'},
-            params={'ipAddress': ip, 'maxAgeInDays': '90'},
-            timeout=_TIMEOUT,
-        )
-        if r.status_code == 200:
-            return int(r.json().get('data', {}).get('abuseConfidenceScore', 0))
-        return -1
-    except Exception:
-        return -1
-
-
-# ── Check functions ───────────────────────────────────────────────────────────
-
-def check_headers(headers: dict) -> dict:
-    from_domain     = _extract_domain(headers.get('from', ''))
-    reply_domain    = _extract_domain(headers.get('reply_to', ''))
-    return_path_dom = _extract_domain(headers.get('return_path', ''))
-    sender_ip       = _extract_sender_ip(headers.get('received', []))
-
-    flags = []
-
-    reply_mismatch = bool(reply_domain and from_domain and reply_domain != from_domain)
-    if reply_mismatch:
-        flags.append(f'Reply-To domain ({reply_domain}) differs from From ({from_domain})')
-
-    return_path_mismatch = bool(return_path_dom and from_domain and return_path_dom != from_domain)
-    if return_path_mismatch:
-        flags.append(f'Return-Path domain ({return_path_dom}) differs from From ({from_domain})')
-
-    mid_mismatch = False
-    mid = headers.get('message_id', '')
-    if mid and from_domain:
-        m = re.search(r'@([^>]+)>', mid)
-        if m:
-            mid_domain = m.group(1).lower().strip()
-            if mid_domain != from_domain:
-                mid_mismatch = True
-                flags.append(f'Message-ID domain ({mid_domain}) differs from From ({from_domain})')
-
-    no_received = not headers.get('received')
-    if no_received:
-        flags.append('No Received headers – possible direct injection')
-
-    x_mailer = headers.get('x_mailer', '').lower()
-    if x_mailer and any(t in x_mailer for t in _SPAM_TOOLS):
-        flags.append(f'Suspicious X-Mailer: {headers["x_mailer"]}')
-
-    logger.info(f'Header check: {len(flags)} flag(s) | from={from_domain} | ip={sender_ip}')
-
-    return {
-        'from_domain':          from_domain,
-        'reply_to_domain':      reply_domain,
-        'return_path_domain':   return_path_dom,
-        'sender_ip':            sender_ip,
-        'received_hops':        len(headers.get('received', [])),
-        'reply_mismatch':       reply_mismatch,
-        'return_path_mismatch': return_path_mismatch,
-        'mid_mismatch':         mid_mismatch,
-        'no_received':          no_received,
-        'flags':                flags,
-    }
-
-
-def check_authentication(domain: str, raw_bytes: bytes = b'') -> dict:
-    if not domain:
-        return {
-            'domain': '',
-            'spf':   {'record': None, 'result': 'missing'},
-            'dmarc': {'record': None, 'result': 'missing', 'policy': 'none'},
-            'dkim':  {'record': None, 'result': 'missing', 'selector': '',
-                      'signature_present': False, 'signature_valid': None},
-            'flags': ['Could not extract sender domain – skipping auth checks'],
-        }
-
-    spf_record           = _lookup_spf(domain)
-    dmarc_record         = _lookup_dmarc(domain)
-    dkim_record, sel     = _lookup_dkim_record(domain)
-
-    dmarc_policy = 'none'
-    if dmarc_record:
-        m = re.search(r'\bp=(\w+)', dmarc_record)
-        if m:
-            dmarc_policy = m.group(1)
-
-    sig_present = b'DKIM-Signature' in raw_bytes if raw_bytes else False
-    sig_valid   = _verify_dkim(raw_bytes) if sig_present else None
-
-    flags = []
-    if not spf_record:
-        flags.append(f'No SPF record for {domain}')
-    if not dmarc_record:
-        flags.append(f'No DMARC record for {domain}')
-    if not dkim_record:
-        flags.append(f'No DKIM DNS record for {domain} (tried: {", ".join(DKIM_SELECTORS)})')
-    if sig_present and sig_valid is False:
-        flags.append('DKIM signature present but verification failed')
-    if dmarc_record and dmarc_policy == 'none':
-        flags.append(f'DMARC policy is "none" for {domain} – monitoring only, no enforcement')
-
-    logger.info(
-        f'Auth: domain={domain} | '
-        f'spf={"found" if spf_record else "missing"} | '
-        f'dmarc={"found" if dmarc_record else "missing"}(p={dmarc_policy}) | '
-        f'dkim_dns={"found" if dkim_record else "missing"} | '
-        f'sig_present={sig_present} sig_valid={sig_valid}'
+def _wrap(text, indent=4):
+    return textwrap.fill(
+        text,
+        width=_W - indent,
+        initial_indent=' ' * indent,
+        subsequent_indent=' ' * (indent + 2),
     )
 
-    return {
-        'domain': domain,
-        'spf':   {'record': spf_record,   'result': 'found' if spf_record   else 'missing'},
-        'dmarc': {'record': dmarc_record, 'result': 'found' if dmarc_record else 'missing',
-                  'policy': dmarc_policy},
-        'dkim':  {'record': dkim_record,  'result': 'found' if dkim_record  else 'missing',
-                  'selector': sel, 'signature_present': sig_present, 'signature_valid': sig_valid},
-        'flags': flags,
+def _verdict_block(verdict):
+    icons = {
+        'MOST LIKELY SAFE':          '✓',
+        'MOST LIKELY UNSAFE':        '✗',
+        'FURTHER ANALYSIS REQUIRED': '?',
     }
+    icon = icons.get(verdict, '?')
+    bar  = '═' * _W
+    mid  = f'  {icon}  {verdict}'
+    return f'\n{bar}\n{mid}\n{bar}'
 
 
-def check_reputation(ip: str) -> dict:
-    """
-    Checks sender IP against:
-      - Spamhaus ZEN DNSBL  (binary listed/clean)
-      - ThreatFox            (known C2/malware infrastructure)
-      - AbuseIPDB            (0–100 confidence score, requires API key)
-    """
-    empty = {
-        'ip':             ip,
-        'spamhaus_zen':   False,
-        'threatfox_ip':   False,
-        'abuseipdb_score': -1,
-        'flags':          [],
-    }
+# ── Sections ──────────────────────────────────────────────────────────────────
 
-    if not ip or _PRIVATE_IP.match(ip):
-        return empty
-
-    flags = []
-
-    reversed_ip = '.'.join(reversed(ip.split('.')))
-    on_zen      = _dnsbl(reversed_ip, 'zen.spamhaus.org')
-    if on_zen:
-        flags.append(f'Sender IP {ip} listed on Spamhaus ZEN')
-
-    tf_hit = _threatfox(ip)
-    if tf_hit:
-        flags.append(f'Sender IP {ip} found in ThreatFox (known C2/malware infrastructure)')
-
-    score = _abuseipdb(ip)
-    if score >= _ABUSEIPDB_MALICIOUS:
-        flags.append(f'Sender IP {ip} has AbuseIPDB confidence score {score}/100')
-    elif score >= _ABUSEIPDB_SUSPICIOUS:
-        flags.append(f'Sender IP {ip} has elevated AbuseIPDB score {score}/100')
-
-    logger.info(
-        f'Reputation: ip={ip} | '
-        f'zen={"LISTED" if on_zen else "clean"} | '
-        f'threatfox={"HIT" if tf_hit else "clean"} | '
-        f'abuseipdb={score if score != -1 else "not configured"}'
-    )
-
-    return {
-        'ip':              ip,
-        'spamhaus_zen':    on_zen,
-        'threatfox_ip':    tf_hit,
-        'abuseipdb_score': score,
-        'flags':           flags,
-    }
+def _msg_section(parsed):
+    h = parsed['headers']
+    out = [_section('ORIGINAL MESSAGE')]
+    out.append(_row('From:',        h.get('from', '')        or '(none)'))
+    out.append(_row('To:',          h.get('to', '')          or '(none)'))
+    out.append(_row('Subject:',     h.get('subject', '')     or '(none)'))
+    out.append(_row('Date:',        h.get('date', '')        or '(none)'))
+    out.append(_row('Message-ID:',  h.get('message_id', '')  or '(none)'))
+    out.append(_row('Reply-To:',    h.get('reply_to', '')    or '(not set)'))
+    out.append(_row('Return-Path:', h.get('return_path', '') or '(not set)'))
+    received = h.get('received', [])
+    out.append(f'\n  Received chain  ({len(received)} hop(s)):')
+    if received:
+        for i, hop in enumerate(received, 1):
+            out.append(f'    [{i}] {hop[:68]}{"..." if len(hop) > 68 else ""}')
+    else:
+        out.append('    (none)')
+    return '\n'.join(out)
 
 
-def check_urls(urls: list) -> dict:
-    """
-    Checks each URL against:
-      - URLhaus       (malware distribution URLs)
-      - Spamhaus DBL  (domain blocklist)
-      - ThreatFox     (malicious domain infrastructure)
-    """
-    results = []
-    flags   = []
-    targets = list(dict.fromkeys(urls))[:_MAX_URLS]
+def _headers_section(hf):
+    out = [_section('HEADER ANALYSIS')]
+    out.append(_row('Sender domain:',   hf['from_domain']        or '(unknown)'))
+    out.append(_row('Reply-To domain:', hf['reply_to_domain']    or '(not set)'))
+    out.append(_row('Return-Path:',     hf['return_path_domain'] or '(not set)'))
+    out.append(_row('Sender IP:',       hf['sender_ip']          or '(not found — no Received headers)'))
+    out.append(_row('Received hops:',   str(hf['received_hops'])))
+    out.append('\n  Checks:')
+    out.append(_check_row('Reply-To mismatch:',    '⚠  YES' if hf['reply_mismatch']       else '✓  no'))
+    out.append(_check_row('Return-Path mismatch:', '⚠  YES' if hf['return_path_mismatch'] else '✓  no'))
+    out.append(_check_row('Message-ID mismatch:',  '⚠  YES' if hf['mid_mismatch']         else '✓  no'))
+    out.append(_check_row('Missing Received chain:','⚠  YES' if hf['no_received']          else '✓  no'))
 
-    for url in targets:
-        entry = {
-            'url':            url,
-            'urlhaus':        False,
-            'spamhaus_dbl':   False,
-            'threatfox_domain': False,
-        }
+    er = hf.get('emailrep')
+    email = hf.get('from_email', '')
+    out.append(f'\n  EmailRep  (sender: {email or "unknown"}):')
+    if er is None:
+        out.append(_check_row('Status:', '–  not configured  (set EMAILREP_API_KEY or none needed for basic)'))
+    else:
+        rep_icon = '⚠ ' if er['suspicious'] or er['blacklisted'] or er['malicious_activity'] else '✓ '
+        out.append(_check_row('Reputation:',       f'{rep_icon} {er["reputation"]}  ({er["references"]} references)'))
+        out.append(_check_row('Blacklisted:',      '⚠  YES' if er['blacklisted']               else '✓  no'))
+        out.append(_check_row('Malicious activity:','⚠  YES' if er['malicious_activity']        else '✓  no'))
+        out.append(_check_row('Recent malicious:', '⚠  YES' if er['malicious_activity_recent']  else '✓  no'))
+        out.append(_check_row('Spam:',             '⚠  YES' if er['spam']                       else '✓  no'))
+        out.append(_check_row('Spoofable:',        '⚠  YES' if er['spoofable']                  else '✓  no'))
+        out.append(_check_row('Disposable address:','⚠  YES' if er['disposable']                else '✓  no'))
+        if er['new_domain'] and er['days_since_domain_creation'] != -1:
+            out.append(_check_row('Domain age:', f'⚠  {er["days_since_domain_creation"]} days — newly registered'))
+        if er['credentials_leaked']:
+            leaked = '(RECENT — likely compromised)' if er['credentials_leaked_recent'] else '(historical)'
+            out.append(_check_row('Credentials leaked:', f'⚠  YES  {leaked}'))
 
-        if _urlhaus(url):
-            entry['urlhaus'] = True
-            flags.append(f'URL found in URLhaus: {url}')
-
-        m = re.search(r'https?://([^/?\s]+)', url)
-        if m:
-            domain = m.group(1).lower().rstrip('.')
-
-            if _dnsbl(domain, 'dbl.spamhaus.org'):
-                entry['spamhaus_dbl'] = True
-                flags.append(f'URL domain on Spamhaus DBL: {domain}')
-
-            if _threatfox(domain):
-                entry['threatfox_domain'] = True
-                flags.append(f'URL domain found in ThreatFox: {domain}')
-
-        results.append(entry)
-
-    urlhaus_hits   = sum(1 for r in results if r['urlhaus'])
-    dbl_hits       = sum(1 for r in results if r['spamhaus_dbl'])
-    threatfox_hits = sum(1 for r in results if r['threatfox_domain'])
-
-    logger.info(
-        f'URL check: {len(targets)}/{len(urls)} checked | '
-        f'urlhaus={urlhaus_hits} | dbl={dbl_hits} | threatfox={threatfox_hits}'
-    )
-
-    return {
-        'total':          len(urls),
-        'checked':        len(targets),
-        'results':        results,
-        'urlhaus_hits':   urlhaus_hits,
-        'dbl_hits':       dbl_hits,
-        'threatfox_hits': threatfox_hits,
-        'flags':          flags,
-    }
+    return '\n'.join(out)
 
 
-def check_attachments(attachments: list) -> dict:
-    """
-    For each attachment:
-      - SHA256 hash
-      - MalwareBazaar hash lookup
-      - ThreatFox hash lookup
-      - Dangerous extension check
-      - MIME magic byte vs declared content-type mismatch
-    Only hashes are sent externally – raw bytes never leave the container.
-    """
-    results = []
-    flags   = []
+def _auth_section(af):
+    out  = [_section(f'AUTHENTICATION  (domain: {af["domain"] or "unknown"})')]
+    spf   = af['spf']
+    dmarc = af['dmarc']
+    dkim  = af['dkim']
 
-    for att in attachments:
-        data     = att.get('data', b'')
-        filename = att.get('filename', 'unknown')
-        declared = att.get('content_type', '').lower()
+    out.append('\n  SPF:')
+    out.append(_check_row('Result:', spf['result']))
+    if spf['record']:
+        out.append(_check_row('Record:', ''))
+        out.append(_wrap(spf['record'], indent=6))
+    else:
+        out.append(_check_row('Record:', '(none found)'))
 
-        sha256_hash   = _sha256(data) if data else ''
-        ext_match     = re.search(r'\.[a-zA-Z0-9]{1,10}$', filename)
-        extension     = ext_match.group(0).lower() if ext_match else ''
-        dangerous     = extension in DANGEROUS_EXTENSIONS
-        detected_mime = _detect_mime(data[:8]) if data else None
-        mime_mismatch = bool(
-            detected_mime and
-            detected_mime not in declared and
-            declared not in detected_mime
-        )
-        mb_hit = _malwarebazaar(sha256_hash) if sha256_hash else False
-        tf_hit = _threatfox(sha256_hash)     if sha256_hash else False
+    out.append('\n  DMARC:')
+    out.append(_check_row('Result:', dmarc['result']))
+    out.append(_check_row('Policy:', dmarc['policy']))
+    if dmarc['record']:
+        out.append(_check_row('Record:', ''))
+        out.append(_wrap(dmarc['record'], indent=6))
+    else:
+        out.append(_check_row('Record:', '(none found)'))
 
-        if mb_hit:
-            flags.append(f'Attachment {filename} ({sha256_hash[:16]}…) found in MalwareBazaar')
-        if tf_hit:
-            flags.append(f'Attachment {filename} ({sha256_hash[:16]}…) found in ThreatFox')
-        if dangerous:
-            flags.append(f'Dangerous attachment extension: {filename} ({extension})')
-        if mime_mismatch:
-            flags.append(
-                f'MIME mismatch in {filename}: '
-                f'declared={declared}, detected={detected_mime}'
+    out.append('\n  DKIM:')
+    out.append(_check_row('DNS record:', dkim['result']))
+    if dkim['selector']:
+        out.append(_check_row('Selector found:', dkim['selector']))
+    out.append(_check_row('Signature in email:', 'yes' if dkim['signature_present'] else 'no'))
+    if dkim['signature_present']:
+        if dkim['signature_valid'] is True:
+            out.append(_check_row('Signature valid:', '✓  yes — cryptographically verified'))
+        elif dkim['signature_valid'] is False:
+            out.append(_check_row('Signature valid:', '⚠  NO — verification failed'))
+        else:
+            out.append(_check_row('Signature valid:', '?  unverified'))
+    return '\n'.join(out)
+
+
+def _rep_section(rf):
+    ip  = rf['ip']
+    out = [_section(f'IP REPUTATION  (sender IP: {ip or "not found"})')]
+
+    if not ip:
+        out.append('\n  No sender IP in Received headers — reputation checks skipped.')
+        out.append('  Note: some email clients strip Received headers when saving .eml files.')
+        return '\n'.join(out)
+
+    score = rf.get('abuseipdb_score', -1)
+    out.append('\n  Checks against live threat intelligence:')
+    out.append(_check_row('Spamhaus ZEN DNSBL:', '⚠  LISTED' if rf['spamhaus_zen']      else '✓  clean'))
+    out.append(_check_row('ThreatFox IOC:',      '⚠  HIT'    if rf.get('threatfox_ip')  else '✓  clean'))
+    vt_ip = rf.get('virustotal_ip')
+    if vt_ip is None:
+        out.append(_check_row('VirusTotal IP:', '–  not configured  (set VIRUSTOTAL_API_KEY)'))
+    elif vt_ip.get('note') == 'not in database':
+        out.append(_check_row('VirusTotal IP:', f'?  not in database'))
+    elif vt_ip['malicious'] > 0:
+        out.append(_check_row('VirusTotal IP:', f'⚠  {vt_ip["malicious"]}/{vt_ip["total"]} engines flagged'))
+    else:
+        out.append(_check_row('VirusTotal IP:', f'✓  clean  (0/{vt_ip["total"]} engines)'))
+
+    if score == -1:
+        out.append(_check_row('AbuseIPDB:', '–  not configured  (set ABUSEIPDB_API_KEY)'))
+    elif score >= 80:
+        out.append(_check_row('AbuseIPDB:', f'⚠  {score}/100  (≥80 = malicious threshold)'))
+    elif score >= 25:
+        out.append(_check_row('AbuseIPDB:', f'?  {score}/100  (≥25 = suspicious threshold)'))
+    else:
+        out.append(_check_row('AbuseIPDB:', f'✓  {score}/100  (clean)'))
+    return '\n'.join(out)
+
+
+def _urls_section(url_f, urls):
+    total   = url_f['total']
+    checked = url_f['checked']
+    out     = [_section(f'URL ANALYSIS  ({total} found, {checked} checked)')]
+
+    if not urls:
+        out.append('\n  No URLs found in message body.')
+        return '\n'.join(out)
+
+    rmap = {r['url']: r for r in url_f['results']}
+    for url in urls:
+        r     = rmap.get(url, {})
+        short = url[:60] + ('...' if len(url) > 60 else '')
+        out.append(f'\n  {short}')
+        out.append(_check_row('URLhaus:',     '⚠  LISTED' if r.get('urlhaus')          else '✓  clean', 16))
+        out.append(_check_row('Spamhaus DBL:','⚠  LISTED' if r.get('spamhaus_dbl')     else '✓  clean', 16))
+        out.append(_check_row('ThreatFox:',   '⚠  HIT'    if r.get('threatfox_domain') else '✓  clean', 16))
+        vt = r.get('virustotal')
+        if vt is None:
+            out.append(_check_row('VirusTotal:', '–  not configured', 16))
+        elif vt.get('note') == 'not in database':
+            out.append(_check_row('VirusTotal:', '?  not in database', 16))
+        elif vt['malicious'] > 0:
+            out.append(_check_row('VirusTotal:', f'⚠  {vt["malicious"]}/{vt["total"]} engines flagged', 16))
+        elif vt['suspicious'] > 0:
+            out.append(_check_row('VirusTotal:', f'?  {vt["suspicious"]}/{vt["total"]} engines suspicious', 16))
+        else:
+            out.append(_check_row('VirusTotal:', f'✓  clean  (0/{vt["total"]} engines)', 16))
+        gsb = r.get('google_safebrowsing')
+        if gsb is None and not os.environ.get('GOOGLE_SAFE_BROWSING_KEY'):
+            out.append(_check_row('Google SafeBrowsing:', '–  not configured', 16))
+        elif gsb:
+            label = {'MALWARE': 'malware', 'SOCIAL_ENGINEERING': 'phishing', 'UNWANTED_SOFTWARE': 'unwanted software'}.get(gsb, gsb)
+            out.append(_check_row('Google SafeBrowsing:', f'⚠  FLAGGED  ({label})', 16))
+        elif gsb == '':
+            out.append(_check_row('Google SafeBrowsing:', '–  not checked', 16))
+        else:
+            out.append(_check_row('Google SafeBrowsing:', '✓  clean', 16))
+    return '\n'.join(out)
+
+
+def _att_section(att_f):
+    out = [_section(f'ATTACHMENT ANALYSIS  ({att_f["count"]} file(s))')]
+
+    if not att_f['results']:
+        out.append('\n  No attachments found.')
+        return '\n'.join(out)
+
+    for att in att_f['results']:
+        sha = att['sha256']
+        out.append(f'\n  {att["filename"]}')
+        out.append(_check_row('Size:',          f'{att["size"]:,} bytes',                      18))
+        out.append(_check_row('Extension:',     att['extension']              or '(none)',     18))
+        out.append(_check_row('Declared MIME:', att['declared_mime']          or '(none)',     18))
+        out.append(_check_row('Detected MIME:', att['detected_mime']          or '(unknown)',  18))
+        out.append(_check_row('SHA256:',        (sha[:48] + '…') if sha else '(empty)', 18))
+        out.append('')
+        out.append(_check_row('Dangerous ext:',  '⚠  YES' if att['dangerous']     else '✓  no',    18))
+        out.append(_check_row('MIME mismatch:',  '⚠  YES' if att['mime_mismatch'] else '✓  no',    18))
+        out.append(_check_row('MalwareBazaar:',  '⚠  HIT' if att['malwarebazaar'] else '✓  clean', 18))
+        out.append(_check_row('ThreatFox:',      '⚠  HIT' if att.get('threatfox') else '✓  clean', 18))
+    return '\n'.join(out)
+
+
+def _flags_section(all_flags):
+    out = [_section(f'FLAGS  ({len(all_flags)} raised)')]
+    if not all_flags:
+        out.append('\n  No flags raised.')
+    else:
+        out.append('')
+        for i, flag in enumerate(all_flags, 1):
+            line = textwrap.fill(
+                f'[{i:02d}] ⚠  {flag}',
+                width=_W - 2,
+                initial_indent='  ',
+                subsequent_indent='       ',
             )
+            out.append(line)
+    return '\n'.join(out)
 
-        results.append({
-            'filename':      filename,
-            'sha256':        sha256_hash,
-            'extension':     extension,
-            'declared_mime': declared,
-            'detected_mime': detected_mime,
-            'dangerous':     dangerous,
-            'mime_mismatch': mime_mismatch,
-            'malwarebazaar': mb_hit,
-            'threatfox':     tf_hit,
-            'size':          att.get('size', 0),
-        })
 
-        logger.debug(
-            f'Attachment: {filename} | sha256={sha256_hash[:16]}… | '
-            f'mb={mb_hit} | tf={tf_hit} | '
-            f'dangerous={dangerous} | mime_mismatch={mime_mismatch}'
+def _sources_section():
+    out = [_section('THREAT INTELLIGENCE SOURCES')]
+    out.append('')
+    for name, kind, purpose, key in [
+        ('Spamhaus ZEN',  'DNSBL', 'Sender IP blocklist',             'no key'),
+        ('Spamhaus DBL',  'DNSBL', 'URL domain blocklist',            'no key'),
+        ('URLhaus',       'API',   'Malicious URL database',          'no key'),
+        ('MalwareBazaar', 'API',   'Malware hash database (SHA256)',  'no key'),
+        ('ThreatFox',     'API',   'IOC: IPs, domains, hashes',       'no key'),
+        ('AbuseIPDB',     'API',   'IP abuse confidence 0–100',       'optional key'),
+        ('VirusTotal',    'API',   'URL/file/IP — 70+ AV engines',    'required key'),
+        ('EmailRep',      'API',   'Sender email address reputation',  'optional key'),
+        ('Google SafeBrowsing', 'API', 'URL phishing/malware check', 'required key'),
+    ]:
+        out.append(f'  {name:<16} [{kind:<4}]  {purpose:<36} {key}')
+    out.append('')
+    out.append('  GDPR: IP addresses and SHA256 hashes sent to all sources.')
+    out.append('  EmailRep receives the sender email address (personal data) for')
+    out.append('  security analysis under legitimate interest — not stored locally.')
+    out.append('  Google Safe Browsing receives actual URL strings (not personal data).')
+    out.append('  No email body content, names, or attachment data transmitted.')
+    return '\n'.join(out)
+
+
+# ── Verdict explanation ───────────────────────────────────────────────────────
+
+def _verdict_explanation(result: dict) -> str:
+    """
+    Produces a plain-language explanation of exactly why the verdict was reached.
+    """
+    verdict = result["verdict"]
+    hf      = result["header_findings"]
+    af      = result["auth_findings"]
+    rf      = result["rep_findings"]
+    url_f   = result["url_findings"]
+    att_f   = result["att_findings"]
+    score   = rf.get("abuseipdb_score", -1)
+
+    reasons = []
+
+    # MOST LIKELY UNSAFE triggers
+    if hf["reply_mismatch"]:
+        reasons.append(f'Reply-To domain ({hf["reply_to_domain"]}) does not match the From domain ({hf["from_domain"]}). This is a classic BEC/phishing indicator — replies go to the attacker, not the apparent sender.')
+    if hf["return_path_mismatch"]:
+        reasons.append(f'Return-Path domain ({hf["return_path_domain"]}) does not match From ({hf["from_domain"]}). Bounced messages return to a different address than the claimed sender.')
+    if rf["spamhaus_zen"]:
+        reasons.append(f'Sender IP {rf["ip"]} is listed on Spamhaus ZEN — a live blocklist of known spam sources, open relays, and compromised hosts.')
+    if rf.get("threatfox_ip"):
+        reasons.append(f'Sender IP {rf["ip"]} is in ThreatFox — associated with known malware C2 infrastructure or botnet activity.')
+    if score != -1 and score >= 80:
+        reasons.append(f'Sender IP {rf["ip"]} has an AbuseIPDB confidence score of {score}/100 — reported as malicious by the security community.')
+    if url_f["urlhaus_hits"] > 0:
+        reasons.append(f'{url_f["urlhaus_hits"]} URL(s) found in URLhaus — a database of URLs actively distributing malware.')
+    if url_f["dbl_hits"] > 0:
+        reasons.append(f'{url_f["dbl_hits"]} URL domain(s) listed on Spamhaus DBL — known spam or phishing domains.')
+    if url_f["threatfox_hits"] > 0:
+        reasons.append(f'{url_f["threatfox_hits"]} URL domain(s) found in ThreatFox — associated with malware infrastructure.')
+    if att_f["malwarebazaar_hits"] > 0:
+        reasons.append(f'{att_f["malwarebazaar_hits"]} attachment(s) matched in MalwareBazaar by SHA256 hash — confirmed malware samples.')
+    if att_f["threatfox_hits"] > 0:
+        reasons.append(f'{att_f["threatfox_hits"]} attachment hash(es) found in ThreatFox — associated with known malware.')
+    if url_f.get("vt_hits", 0) > 0:
+        reasons.append(f'{url_f["vt_hits"]} URL(s) flagged as malicious by VirusTotal — confirmed across multiple antivirus engines.')
+    if url_f.get("gsb_hits", 0) > 0:
+        reasons.append(f'{url_f["gsb_hits"]} URL(s) flagged by Google Safe Browsing — the same database used by Chrome and Firefox to block phishing and malware sites.')
+    er = hf.get("emailrep") or {}
+    if er.get("blacklisted") or er.get("malicious_activity"):
+        reasons.append(f'Sender address {hf.get("from_email","")} is blacklisted or has documented malicious activity according to EmailRep (reputation: {er.get("reputation","unknown")}).')
+    elif er.get("malicious_activity_recent"):
+        reasons.append(f'Sender address {hf.get("from_email","")} had malicious activity in the last 90 days (EmailRep) — possible compromised or throwaway account.')
+    if att_f.get("vt_hits", 0) > 0:
+        reasons.append(f'{att_f["vt_hits"]} attachment(s) flagged by VirusTotal — confirmed malware by multiple engines.')
+    vt_ip = rf.get("virustotal_ip")
+    if vt_ip and vt_ip.get("malicious", 0) > 0:
+        reasons.append(f'Sender IP {rf["ip"]} flagged by {vt_ip["malicious"]}/{vt_ip["total"]} VirusTotal engines.')
+    if af["dkim"]["signature_present"] and af["dkim"]["signature_valid"] is False:
+        reasons.append("DKIM signature is present but cryptographic verification failed — the message was tampered with after signing, or the signature is forged.")
+
+    missing = sum([
+        af["spf"]["result"]   == "missing",
+        af["dmarc"]["result"] == "missing",
+        af["dkim"]["result"]  == "missing",
+    ])
+    if missing >= 2:
+        names = [n for n, k in [("SPF", "spf"), ("DMARC", "dmarc"), ("DKIM", "dkim")]
+                 if af[k]["result"] == "missing"]
+        reasons.append(f'{", ".join(names)} are all missing — the sender domain has no email authentication configured, making spoofing trivially easy.')
+
+    # FURTHER ANALYSIS REQUIRED triggers
+    if verdict == "FURTHER ANALYSIS REQUIRED":
+        if missing == 1:
+            name = next(n for n, k in [("SPF","spf"),("DMARC","dmarc"),("DKIM","dkim")] if af[k]["result"]=="missing")
+            reasons.append(f'{name} record is missing — partial authentication leaves the domain open to spoofing.')
+        if af["dmarc"]["policy"] == "none":
+            reasons.append(f'DMARC policy is set to "none" — the domain owner monitors failures but does not enforce rejection or quarantine. Failed authentication is not acted upon.')
+        if hf["mid_mismatch"]:
+            reasons.append(f'Message-ID domain does not match the sender domain — may indicate routing through a third-party service or a spoofed header.')
+        if hf["no_received"]:
+            reasons.append("No Received headers found — the email may have been injected directly or headers were stripped, making routing analysis impossible.")
+        if score != -1 and score >= 25:
+            reasons.append(f'Sender IP {rf["ip"]} has an AbuseIPDB score of {score}/100 — elevated abuse reports warrant further investigation.')
+        for att in att_f["results"]:
+            if att["dangerous"]:
+                reasons.append(f'Attachment "{att["filename"]}" has a dangerous extension ({att["extension"]}) — commonly used to deliver malware.')
+            if att["mime_mismatch"]:
+                reasons.append(f'Attachment "{att["filename"]}" declared MIME type ({att["declared_mime"]}) does not match actual file content ({att["detected_mime"]}) — possible extension spoofing.')
+
+    if not reasons:
+        return "  No specific risk factors identified. Verdict based on absence of strong positive authentication signals."
+
+    out = []
+    for i, r in enumerate(reasons, 1):
+        wrapped = textwrap.fill(
+            f"[{i}] {r}",
+            width=_W - 2,
+            initial_indent="  ",
+            subsequent_indent="     ",
         )
-
-    mb_hits = sum(1 for r in results if r['malwarebazaar'])
-    tf_hits = sum(1 for r in results if r['threatfox'])
-    logger.info(
-        f'Attachment check: {len(results)} file(s) | '
-        f'mb_hits={mb_hits} | tf_hits={tf_hits}'
-    )
-
-    return {
-        'count':              len(results),
-        'results':            results,
-        'malwarebazaar_hits': mb_hits,
-        'threatfox_hits':     tf_hits,
-        'flags':              flags,
-    }
-
-
-# ── Verdict ───────────────────────────────────────────────────────────────────
-
-def _calculate_verdict(
-    header_f: dict,
-    auth_f:   dict,
-    rep_f:    dict,
-    url_f:    dict,
-    att_f:    dict,
-) -> str:
-    abuseipdb_score = rep_f.get('abuseipdb_score', -1)
-
-    if any([
-        header_f['reply_mismatch'],
-        header_f['return_path_mismatch'],
-        rep_f['spamhaus_zen'],
-        rep_f['threatfox_ip'],
-        abuseipdb_score != -1 and abuseipdb_score >= _ABUSEIPDB_MALICIOUS,
-        url_f['urlhaus_hits']        > 0,
-        url_f['dbl_hits']            > 0,
-        url_f['threatfox_hits']      > 0,
-        att_f['malwarebazaar_hits']  > 0,
-        att_f['threatfox_hits']      > 0,
-        auth_f['dkim']['signature_present'] and auth_f['dkim']['signature_valid'] is False,
-    ]):
-        return 'MOST LIKELY UNSAFE'
-
-    missing_auth = sum([
-        auth_f['spf']['result']   == 'missing',
-        auth_f['dmarc']['result'] == 'missing',
-        auth_f['dkim']['result']  == 'missing',
-    ])
-
-    if missing_auth >= 2:
-        return 'MOST LIKELY UNSAFE'
-
-    uncertain = any([
-        missing_auth == 1,
-        auth_f['dmarc']['policy'] == 'none',
-        header_f['mid_mismatch'],
-        header_f['no_received'],
-        abuseipdb_score != -1 and abuseipdb_score >= _ABUSEIPDB_SUSPICIOUS,
-        any(r['dangerous']     for r in att_f['results']),
-        any(r['mime_mismatch'] for r in att_f['results']),
-    ])
-
-    if uncertain:
-        return 'FURTHER ANALYSIS REQUIRED'
-
-    if missing_auth == 0 and auth_f['dmarc']['policy'] in ('reject', 'quarantine'):
-        return 'MOST LIKELY SAFE'
-
-    return 'FURTHER ANALYSIS REQUIRED'
+        out.append(wrapped)
+    return "\n".join(out)
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
-def analyze(parsed: dict, raw_bytes: bytes = b'') -> dict:
-    logger.info('Analysis started')
+def _report_id(now_str: str) -> str:
+    """Generates a unique report ID from timestamp: PMRT-20260511-162121"""
+    ts = now_str.replace('-', '').replace(':', '').replace(' ', '-')[:15]
+    return f'PMRT-{ts}'
 
-    headers         = parsed.get('headers', {})
-    header_findings = check_headers(headers)
-    auth_findings   = check_authentication(header_findings['from_domain'], raw_bytes)
-    rep_findings    = check_reputation(header_findings['sender_ip'])
-    url_findings    = check_urls(parsed.get('urls', []))
-    att_findings    = check_attachments(parsed.get('attachments', []))
 
-    verdict = _calculate_verdict(
-        header_findings, auth_findings, rep_findings, url_findings, att_findings
-    )
+def generate_report(parsed: dict, result: dict) -> str:
+    now       = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
+    verdict   = result['verdict']
+    report_id = _report_id(now)
 
-    all_flags = (
-        header_findings['flags'] +
-        auth_findings['flags']   +
-        rep_findings['flags']    +
-        url_findings['flags']    +
-        att_findings['flags']
-    )
+    explanation = _verdict_explanation(result)
 
-    logger.info(f'Analysis complete: verdict={verdict} | flags={len(all_flags)}')
+    # ── Report cover ──────────────────────────────────────────────
+    B = '█'
+    cover = [
+        '',
+        B * _W,
+        B * _W,
+        f'{B}{"POSTMORTEM — EMAIL SECURITY ANALYSIS":^{_W-2}}{B}',
+        f'{B}{"POSTMORTEM ANALYSIS REPORT":^{_W-2}}{B}',
+        B * _W,
+        B * _W,
+        '',
+        f'  Report ID:      {report_id}',
+        f'  Generated:      {now}',
+        f'  Tool:           PostmortemCLI {_VERSION}',
+        f'  Classification: SECURITY ANALYSIS — HANDLE ACCORDINGLY',
+        f'  Retention:      NO DATA RETAINED — STATELESS ANALYSIS',
+        '',
+        _rule(),
+    ]
 
-    return {
-        'verdict':         verdict,
-        'domain':          auth_findings['domain'],
-        'sender_ip':       header_findings['sender_ip'],
-        'header_findings': header_findings,
-        'auth_findings':   auth_findings,
-        'rep_findings':    rep_findings,
-        'url_findings':    url_findings,
-        'att_findings':    att_findings,
-        'all_flags':       all_flags,
-    }
+    # ── Body ──────────────────────────────────────────────────────
+    body = [
+        _msg_section(parsed),
+        _headers_section(result['header_findings']),
+        _auth_section(result['auth_findings']),
+        _rep_section(result['rep_findings']),
+        _urls_section(result['url_findings'], parsed.get('urls', [])),
+        _att_section(result['att_findings']),
+        _flags_section(result['all_flags']),
+        _sources_section(),
+        _section(f'VERDICT: {verdict}'),
+        f'\n{explanation}',
+        _verdict_block(verdict),
+    ]
+
+    # ── Report footer ─────────────────────────────────────────────
+    footer = [
+        '',
+        _rule(),
+        f'  Report ID:   {report_id}',
+        f'  Closed:      {now}',
+        f'  Tool:        PostmortemCLI {_VERSION}',
+        f'  Statement:   No email content, body text, attachment data, or personal',
+        f'               information was retained or transmitted beyond what is',
+        f'               documented in the Threat Intelligence Sources section above.',
+        _rule(),
+        '',
+    ]
+
+    text = '\n'.join(cover + body + footer)
+    logger.info(f'Report generated | id={report_id} | verdict={verdict} | flags={len(result["all_flags"])}')
+    return text
+
+
+def save_report(report: str) -> str:
+    os.makedirs(_REPORT_DIR, exist_ok=True)
+    ts   = datetime.now().strftime('%Y%m%d_%H%M%S')
+    path = os.path.join(_REPORT_DIR, f'report_{ts}.txt')
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write(report)
+    logger.info(f'Report saved → {path}')
+    return path
+
+
+def send_report(to_addr: str, report: str) -> bool:
+    if not to_addr:
+        logger.warning('SMTP send skipped — no recipient address')
+        return False
+    host      = os.environ.get('REPORT_SMTP_HOST', 'localhost')
+    port      = int(os.environ.get('REPORT_SMTP_PORT', '25'))
+    from_addr = os.environ.get('REPORT_FROM_ADDR', 'postmortem@localhost')
+    msg            = MIMEText(report, 'plain', 'utf-8')
+    msg['Subject'] = '[PostmortemCLI] Security Analysis Report'
+    msg['From']    = from_addr
+    msg['To']      = to_addr
+    msg['X-Mailer']= f'PostmortemCLI {_VERSION}'
+    try:
+        with smtplib.SMTP(host, port, timeout=5) as smtp:
+            smtp.sendmail(from_addr, [to_addr], msg.as_string())
+        logger.info(f'Report sent → {to_addr} ({host}:{port})')
+        return True
+    except Exception as e:
+        logger.warning(f'Report SMTP send failed → {e}')
+        return False
+
+
+def report(parsed: dict, result: dict, send_to: str = '') -> str:
+    text = generate_report(parsed, result)
+    print(text)
+    if send_to:
+        ok = send_report(send_to, text)
+        if ok:
+            print(f'  Report sent  → {send_to}\n')
+        else:
+            print(f'  SMTP delivery failed — saved to file only\n')
+    return text

@@ -119,8 +119,10 @@ def _lookup_dmarc(domain: str) -> str | None:
     return None
 
 
-def _lookup_dkim_record(domain: str) -> tuple[str | None, str]:
-    for selector in DKIM_SELECTORS:
+def _lookup_dkim_record(domain: str, selectors: list = None) -> tuple[str | None, str]:
+    if selectors is None:
+        selectors = DKIM_SELECTORS
+    for selector in selectors:
         for r in _resolve_txt(f'{selector}._domainkey.{domain}'):
             if 'v=DKIM1' in r or 'p=' in r:
                 return r, selector
@@ -135,6 +137,26 @@ def _verify_dkim(raw_bytes: bytes) -> bool | None:
     except Exception:
         return None
 
+
+def _extract_dkim_selector_from_bytes(raw_bytes: bytes) -> str:
+    """
+    Reads the actual DKIM selector used in the email from its DKIM-Signature header.
+    DKIM-Signature contains s=<selector> which tells us exactly which DNS record to look up.
+    Without this, we only try guesses and miss selectors like '20230601' (Gmail).
+    """
+    if not raw_bytes:
+        return ''
+    import re as _re
+    # Find s= tag inside DKIM-Signature header value
+    # Simple approach: find DKIM-Signature then look for s= within next 500 bytes
+    idx = raw_bytes.find(b'DKIM-Signature:')
+    if idx == -1:
+        return ''
+    chunk = raw_bytes[idx:idx+500]
+    sel_match = _re.search(b'[; \t]s=([a-zA-Z0-9_.-]+)', chunk)
+    if not sel_match:
+        return ''
+    return sel_match.group(1).decode('ascii', errors='replace')
 
 def _dnsbl(host: str, zone: str) -> bool:
     try:
@@ -217,6 +239,226 @@ def _abuseipdb(ip: str) -> int:
         return -1
 
 
+
+
+def _virustotal_url(url: str) -> dict | None:
+    """
+    Checks a URL against VirusTotal — scans against 70+ engines simultaneously.
+    Returns {'malicious': int, 'suspicious': int, 'total': int} or None on error.
+
+    Free tier: 4 requests/minute, 500/day.
+    Requires VIRUSTOTAL_API_KEY environment variable.
+    """
+    key = os.environ.get('VIRUSTOTAL_API_KEY', '')
+    if not key or not url:
+        return None
+    try:
+        import base64
+        url_id = base64.urlsafe_b64encode(url.encode()).decode().strip('=')
+        r = requests.get(
+            f'https://www.virustotal.com/api/v3/urls/{url_id}',
+            headers={'x-apikey': key},
+            timeout=_TIMEOUT,
+        )
+        if r.status_code == 404:
+            return {'malicious': 0, 'suspicious': 0, 'total': 0, 'note': 'not in database'}
+        if r.status_code == 429:
+            logger.warning('VirusTotal rate limit hit – skipping remaining URL checks')
+            return None
+        if r.status_code != 200:
+            return None
+        stats = r.json().get('data', {}).get('attributes', {}).get('last_analysis_stats', {})
+        return {
+            'malicious':  stats.get('malicious',  0),
+            'suspicious': stats.get('suspicious', 0),
+            'total':      sum(stats.values()),
+            'note':       '',
+        }
+    except Exception as e:
+        logger.debug(f'VirusTotal URL check failed: {e}')
+        return None
+
+
+def _virustotal_hash(sha256_hash: str) -> dict | None:
+    """
+    Checks a file hash against VirusTotal.
+    Returns {'malicious': int, 'suspicious': int, 'total': int} or None on error.
+    Sends only the SHA256 hash — raw file bytes never leave the container.
+    """
+    key = os.environ.get('VIRUSTOTAL_API_KEY', '')
+    if not key or not sha256_hash:
+        return None
+    try:
+        r = requests.get(
+            f'https://www.virustotal.com/api/v3/files/{sha256_hash}',
+            headers={'x-apikey': key},
+            timeout=_TIMEOUT,
+        )
+        if r.status_code == 404:
+            return {'malicious': 0, 'suspicious': 0, 'total': 0, 'note': 'not in database'}
+        if r.status_code == 429:
+            logger.warning('VirusTotal rate limit hit')
+            return None
+        if r.status_code != 200:
+            return None
+        stats = r.json().get('data', {}).get('attributes', {}).get('last_analysis_stats', {})
+        return {
+            'malicious':  stats.get('malicious',  0),
+            'suspicious': stats.get('suspicious', 0),
+            'total':      sum(stats.values()),
+            'note':       '',
+        }
+    except Exception as e:
+        logger.debug(f'VirusTotal hash check failed: {e}')
+        return None
+
+
+def _virustotal_ip(ip: str) -> dict | None:
+    """
+    Checks an IP address against VirusTotal.
+    Returns {'malicious': int, 'suspicious': int, 'total': int} or None on error.
+    """
+    key = os.environ.get('VIRUSTOTAL_API_KEY', '')
+    if not key or not ip:
+        return None
+    try:
+        r = requests.get(
+            f'https://www.virustotal.com/api/v3/ip_addresses/{ip}',
+            headers={'x-apikey': key},
+            timeout=_TIMEOUT,
+        )
+        if r.status_code == 404:
+            return {'malicious': 0, 'suspicious': 0, 'total': 0, 'note': 'not in database'}
+        if r.status_code == 429:
+            logger.warning('VirusTotal rate limit hit')
+            return None
+        if r.status_code != 200:
+            return None
+        stats = r.json().get('data', {}).get('attributes', {}).get('last_analysis_stats', {})
+        return {
+            'malicious':  stats.get('malicious',  0),
+            'suspicious': stats.get('suspicious', 0),
+            'total':      sum(stats.values()),
+            'note':       '',
+        }
+    except Exception as e:
+        logger.debug(f'VirusTotal IP check failed: {e}')
+        return None
+
+
+def _emailrep(email_address: str) -> dict | None:
+    """
+    Checks an email address against EmailRep.io.
+    Returns a structured reputation dict, or None on failure.
+
+    EmailRep aggregates: social media presence, dark web credential leaks,
+    data breaches, phishing kit databases, spam lists, domain age, and more.
+
+    GDPR note: the email address (personal data) is sent to EmailRep.
+    This is legitimate interest — security analysis of an unsolicited message.
+    No data is stored locally after the call returns.
+
+    Env: EMAILREP_API_KEY (optional — higher rate limits with key)
+    Free: 250 queries/month, 10/day (unauthenticated: lower limits)
+    """
+    if not email_address or '@' not in email_address:
+        return None
+    key = os.environ.get('EMAILREP_API_KEY', '')
+    headers = {'User-Agent': 'PostmortemCLI'}
+    if key:
+        headers['Key'] = key
+    try:
+        r = requests.get(
+            f'https://emailrep.io/{email_address}',
+            headers=headers,
+            timeout=_TIMEOUT,
+        )
+        if r.status_code == 429:
+            logger.warning('EmailRep rate limit hit')
+            return None
+        if r.status_code != 200:
+            return None
+        data = r.json()
+        details = data.get('details', {})
+        return {
+            'suspicious':              data.get('suspicious', False),
+            'reputation':              data.get('reputation', 'unknown'),
+            'blacklisted':             details.get('blacklisted', False),
+            'malicious_activity':      details.get('malicious_activity', False),
+            'malicious_activity_recent': details.get('malicious_activity_recent', False),
+            'spam':                    details.get('spam', False),
+            'spoofable':               details.get('spoofable', False),
+            'disposable':              details.get('disposable', False),
+            'free_provider':           details.get('free_provider', False),
+            'new_domain':              details.get('new_domain', False),
+            'days_since_domain_creation': details.get('days_since_domain_creation', -1),
+            'credentials_leaked':      details.get('credentials_leaked', False),
+            'credentials_leaked_recent': details.get('credentials_leaked_recent', False),
+            'references':              data.get('references', 0),
+        }
+    except Exception as e:
+        logger.debug(f'EmailRep check failed: {e}')
+        return None
+
+
+def _google_safe_browsing(urls: list) -> dict:
+    """
+    Checks a list of URLs against Google Safe Browsing (Lookup API v4).
+    Covers: malware, phishing (SOCIAL_ENGINEERING), unwanted software, harmful apps.
+
+    Up to 500 URLs per call — all URLs checked in a single request.
+    Returns a dict mapping url → threat_type for any matches.
+    Returns empty dict if clean or API not configured.
+
+    GDPR note: actual URL strings are sent to Google (not hashed).
+    URLs are generally not personal data; this is acceptable for security analysis.
+
+    Env: GOOGLE_SAFE_BROWSING_KEY (required — free Google Cloud API key)
+    Get key: console.cloud.google.com → Enable Safe Browsing API → Create credentials
+    Free: 10,000 requests/day
+    """
+    key = os.environ.get('GOOGLE_SAFE_BROWSING_KEY', '')
+    if not key or not urls:
+        return {}
+    try:
+        r = requests.post(
+            f'https://safebrowsing.googleapis.com/v4/threatMatches:find?key={key}',
+            json={
+                'client': {
+                    'clientId':      'postmortemcli',
+                    'clientVersion': '0.2.1',
+                },
+                'threatInfo': {
+                    'threatTypes':      [
+                        'MALWARE',
+                        'SOCIAL_ENGINEERING',        # phishing
+                        'UNWANTED_SOFTWARE',
+                        'POTENTIALLY_HARMFUL_APPLICATION',
+                    ],
+                    'platformTypes':    ['ANY_PLATFORM'],
+                    'threatEntryTypes': ['URL'],
+                    'threatEntries':    [{'url': u} for u in urls],
+                },
+            },
+            timeout=_TIMEOUT,
+        )
+        if r.status_code == 400:
+            logger.warning(f'Google Safe Browsing bad request: {r.text[:200]}')
+            return {}
+        if r.status_code != 200:
+            return {}
+        matches = r.json().get('matches', [])
+        # Map url → threat type (most severe if multiple)
+        results = {}
+        for match in matches:
+            url         = match.get('threat', {}).get('url', '')
+            threat_type = match.get('threatType', 'UNKNOWN')
+            results[url] = threat_type
+        return results
+    except Exception as e:
+        logger.debug(f'Google Safe Browsing check failed: {e}')
+        return {}
+
 # ── Check functions ───────────────────────────────────────────────────────────
 
 def check_headers(headers: dict) -> dict:
@@ -241,7 +483,9 @@ def check_headers(headers: dict) -> dict:
         m = re.search(r'@([^>]+)>', mid)
         if m:
             mid_domain = m.group(1).lower().strip()
-            if mid_domain != from_domain:
+            # Accept subdomains: mail.gmail.com is valid for gmail.com
+            is_subdomain = mid_domain.endswith('.' + from_domain)
+            if mid_domain != from_domain and not is_subdomain:
                 mid_mismatch = True
                 flags.append(f'Message-ID domain ({mid_domain}) differs from From ({from_domain})')
 
@@ -253,7 +497,39 @@ def check_headers(headers: dict) -> dict:
     if x_mailer and any(t in x_mailer for t in _SPAM_TOOLS):
         flags.append(f'Suspicious X-Mailer: {headers["x_mailer"]}')
 
-    logger.info(f'Header check: {len(flags)} flag(s) | from={from_domain} | ip={sender_ip}')
+    # EmailRep — check the actual sender email address
+    from_addr   = headers.get('from', '')
+    _, from_email = __import__('email.utils', fromlist=['parseaddr']).parseaddr(from_addr)
+    emailrep    = _emailrep(from_email)
+
+    if emailrep:
+        if emailrep['blacklisted'] or emailrep['malicious_activity']:
+            flags.append(
+                f'Sender address {from_email} is blacklisted or has known malicious activity '
+                f'(EmailRep reputation: {emailrep["reputation"]})'
+            )
+        elif emailrep['malicious_activity_recent']:
+            flags.append(
+                f'Sender address {from_email} has recent malicious activity in last 90 days '
+                f'(EmailRep)'
+            )
+        elif emailrep['suspicious']:
+            flags.append(
+                f'Sender address {from_email} is flagged as suspicious by EmailRep '
+                f'(reputation: {emailrep["reputation"]}, references: {emailrep["references"]})'
+            )
+        if emailrep['disposable']:
+            flags.append(f'Sender address {from_email} is a disposable/throwaway address')
+        if emailrep['new_domain'] and emailrep['days_since_domain_creation'] != -1:
+            days = emailrep['days_since_domain_creation']
+            flags.append(f'Sender domain is new ({days} days old) — recently registered domains are high risk')
+        if emailrep['credentials_leaked_recent']:
+            flags.append(f'Sender address {from_email} had credentials leaked in last 90 days — likely compromised account')
+
+    logger.info(
+        f'Header check: {len(flags)} flag(s) | from={from_domain} | ip={sender_ip} | '
+        f'emailrep={emailrep["reputation"] if emailrep else "not configured"}'
+    )
 
     return {
         'from_domain':          from_domain,
@@ -265,6 +541,8 @@ def check_headers(headers: dict) -> dict:
         'return_path_mismatch': return_path_mismatch,
         'mid_mismatch':         mid_mismatch,
         'no_received':          no_received,
+        'emailrep':             emailrep,
+        'from_email':           from_email,
         'flags':                flags,
     }
 
@@ -282,7 +560,17 @@ def check_authentication(domain: str, raw_bytes: bytes = b'') -> dict:
 
     spf_record           = _lookup_spf(domain)
     dmarc_record         = _lookup_dmarc(domain)
-    dkim_record, sel     = _lookup_dkim_record(domain)
+
+    # Try selector extracted from actual email first, then fall back to common selectors
+    email_selector = _extract_dkim_selector_from_bytes(raw_bytes)
+    if email_selector and email_selector not in DKIM_SELECTORS:
+        dkim_selectors_to_try = [email_selector] + DKIM_SELECTORS
+    elif email_selector:
+        dkim_selectors_to_try = [email_selector] + [s for s in DKIM_SELECTORS if s != email_selector]
+    else:
+        dkim_selectors_to_try = DKIM_SELECTORS
+
+    dkim_record, sel     = _lookup_dkim_record(domain, dkim_selectors_to_try)
 
     dmarc_policy = 'none'
     if dmarc_record:
@@ -332,11 +620,12 @@ def check_reputation(ip: str) -> dict:
       - AbuseIPDB            (0–100 confidence score, requires API key)
     """
     empty = {
-        'ip':             ip,
-        'spamhaus_zen':   False,
-        'threatfox_ip':   False,
+        'ip':              ip,
+        'spamhaus_zen':    False,
+        'threatfox_ip':    False,
         'abuseipdb_score': -1,
-        'flags':          [],
+        'virustotal_ip':   None,
+        'flags':           [],
     }
 
     if not ip or _PRIVATE_IP.match(ip):
@@ -352,6 +641,13 @@ def check_reputation(ip: str) -> dict:
     tf_hit = _threatfox(ip)
     if tf_hit:
         flags.append(f'Sender IP {ip} found in ThreatFox (known C2/malware infrastructure)')
+
+    vt_ip = _virustotal_ip(ip)
+    if vt_ip is not None and vt_ip['malicious'] > 0:
+        flags.append(
+            f'Sender IP {ip} flagged by {vt_ip["malicious"]}/{vt_ip["total"]} '
+            f'VirusTotal engines'
+        )
 
     score = _abuseipdb(ip)
     if score >= _ABUSEIPDB_MALICIOUS:
@@ -371,6 +667,7 @@ def check_reputation(ip: str) -> dict:
         'spamhaus_zen':    on_zen,
         'threatfox_ip':    tf_hit,
         'abuseipdb_score': score,
+        'virustotal_ip':   vt_ip,
         'flags':           flags,
     }
 
@@ -386,13 +683,38 @@ def check_urls(urls: list) -> dict:
     flags   = []
     targets = list(dict.fromkeys(urls))[:_MAX_URLS]
 
+    vt_delay = float(os.environ.get('VIRUSTOTAL_RATE_DELAY', '0'))
+
+    # Google Safe Browsing — single bulk call for all URLs at once
+    gsb_results = _google_safe_browsing(targets)
+    if gsb_results:
+        logger.info(f'Google Safe Browsing: {len(gsb_results)} threat(s) found in {len(targets)} URLs')
+
+    # Track flagged domains to avoid duplicate flags for same domain
+    _flagged_dbl_domains      = set()
+    _flagged_threatfox_domains = set()
+
     for url in targets:
         entry = {
-            'url':            url,
-            'urlhaus':        False,
-            'spamhaus_dbl':   False,
+            'url':              url,
+            'urlhaus':          False,
+            'spamhaus_dbl':     False,
             'threatfox_domain': False,
+            'virustotal':       None,
+            'google_safebrowsing': None,
         }
+
+        # GSB result already computed in bulk above
+        gsb_threat = gsb_results.get(url)
+        if gsb_threat:
+            entry['google_safebrowsing'] = gsb_threat
+            threat_label = {
+                'MALWARE':                         'malware',
+                'SOCIAL_ENGINEERING':              'phishing/social engineering',
+                'UNWANTED_SOFTWARE':               'unwanted software',
+                'POTENTIALLY_HARMFUL_APPLICATION': 'potentially harmful app',
+            }.get(gsb_threat, gsb_threat)
+            flags.append(f'URL flagged by Google Safe Browsing as {threat_label}: {url}')
 
         if _urlhaus(url):
             entry['urlhaus'] = True
@@ -404,21 +726,43 @@ def check_urls(urls: list) -> dict:
 
             if _dnsbl(domain, 'dbl.spamhaus.org'):
                 entry['spamhaus_dbl'] = True
-                flags.append(f'URL domain on Spamhaus DBL: {domain}')
+                if domain not in _flagged_dbl_domains:
+                    flags.append(f'URL domain on Spamhaus DBL: {domain}')
+                    _flagged_dbl_domains.add(domain)
 
             if _threatfox(domain):
                 entry['threatfox_domain'] = True
-                flags.append(f'URL domain found in ThreatFox: {domain}')
+                if domain not in _flagged_threatfox_domains:
+                    flags.append(f'URL domain found in ThreatFox: {domain}')
+                    _flagged_threatfox_domains.add(domain)
+
+        vt = _virustotal_url(url)
+        entry['virustotal'] = vt
+        if vt is not None:
+            if vt['malicious'] > 0:
+                flags.append(
+                    f'URL flagged by {vt["malicious"]}/{vt["total"]} VirusTotal engines: {url}'
+                )
+            elif vt['suspicious'] > 0:
+                flags.append(
+                    f'URL marked suspicious by {vt["suspicious"]}/{vt["total"]} VirusTotal engines: {url}'
+                )
+            if vt_delay > 0:
+                time.sleep(vt_delay)
 
         results.append(entry)
 
     urlhaus_hits   = sum(1 for r in results if r['urlhaus'])
     dbl_hits       = sum(1 for r in results if r['spamhaus_dbl'])
     threatfox_hits = sum(1 for r in results if r['threatfox_domain'])
+    vt_hits        = sum(1 for r in results if r['virustotal'] and r['virustotal']['malicious'] > 0)
+    vt_suspicious  = sum(1 for r in results if r['virustotal'] and r['virustotal']['suspicious'] > 0 and (not r['virustotal']['malicious']))
+    gsb_hits       = sum(1 for r in results if r['google_safebrowsing'])
 
     logger.info(
         f'URL check: {len(targets)}/{len(urls)} checked | '
-        f'urlhaus={urlhaus_hits} | dbl={dbl_hits} | threatfox={threatfox_hits}'
+        f'urlhaus={urlhaus_hits} | dbl={dbl_hits} | threatfox={threatfox_hits} | '
+        f'gsb={gsb_hits} | vt_malicious={vt_hits} | vt_suspicious={vt_suspicious}'
     )
 
     return {
@@ -428,6 +772,9 @@ def check_urls(urls: list) -> dict:
         'urlhaus_hits':   urlhaus_hits,
         'dbl_hits':       dbl_hits,
         'threatfox_hits': threatfox_hits,
+        'gsb_hits':       gsb_hits,
+        'vt_hits':        vt_hits,
+        'vt_suspicious':  vt_suspicious,
         'flags':          flags,
     }
 
@@ -462,11 +809,17 @@ def check_attachments(attachments: list) -> dict:
         )
         mb_hit = _malwarebazaar(sha256_hash) if sha256_hash else False
         tf_hit = _threatfox(sha256_hash)     if sha256_hash else False
+        vt_hit = _virustotal_hash(sha256_hash) if sha256_hash else None
 
         if mb_hit:
             flags.append(f'Attachment {filename} ({sha256_hash[:16]}…) found in MalwareBazaar')
         if tf_hit:
             flags.append(f'Attachment {filename} ({sha256_hash[:16]}…) found in ThreatFox')
+        if vt_hit is not None and vt_hit['malicious'] > 0:
+            flags.append(
+                f'Attachment {filename} flagged by {vt_hit["malicious"]}/{vt_hit["total"]} '
+                f'VirusTotal engines ({sha256_hash[:16]}…)'
+            )
         if dangerous:
             flags.append(f'Dangerous attachment extension: {filename} ({extension})')
         if mime_mismatch:
@@ -485,6 +838,7 @@ def check_attachments(attachments: list) -> dict:
             'mime_mismatch': mime_mismatch,
             'malwarebazaar': mb_hit,
             'threatfox':     tf_hit,
+            'virustotal':    vt_hit,
             'size':          att.get('size', 0),
         })
 
@@ -496,9 +850,10 @@ def check_attachments(attachments: list) -> dict:
 
     mb_hits = sum(1 for r in results if r['malwarebazaar'])
     tf_hits = sum(1 for r in results if r['threatfox'])
+    vt_hits = sum(1 for r in results if r['virustotal'] and r['virustotal']['malicious'] > 0)
     logger.info(
         f'Attachment check: {len(results)} file(s) | '
-        f'mb_hits={mb_hits} | tf_hits={tf_hits}'
+        f'mb_hits={mb_hits} | tf_hits={tf_hits} | vt_hits={vt_hits}'
     )
 
     return {
@@ -506,6 +861,7 @@ def check_attachments(attachments: list) -> dict:
         'results':            results,
         'malwarebazaar_hits': mb_hits,
         'threatfox_hits':     tf_hits,
+        'vt_hits':            vt_hits,
         'flags':              flags,
     }
 
@@ -521,11 +877,30 @@ def _calculate_verdict(
 ) -> str:
     abuseipdb_score = rep_f.get('abuseipdb_score', -1)
 
+    # EmailRep signals on sender address
+    emailrep = header_f.get('emailrep') or {}
+    emailrep_malicious  = bool(emailrep.get('blacklisted') or emailrep.get('malicious_activity') or emailrep.get('malicious_activity_recent'))
+    emailrep_suspicious = bool(emailrep.get('suspicious')) and not emailrep_malicious
+
+    # VirusTotal hits
+    vt_ip_malicious   = (rep_f.get('virustotal_ip')  or {}).get('malicious', 0) > 0
+    vt_url_malicious  = url_f.get('vt_hits', 0) > 0
+    vt_att_malicious  = att_f.get('vt_hits', 0) > 0
+    vt_url_suspicious = url_f.get('vt_suspicious', 0) > 0
+
+    # Google Safe Browsing
+    gsb_hits = url_f.get('gsb_hits', 0) > 0
+
     if any([
         header_f['reply_mismatch'],
         header_f['return_path_mismatch'],
         rep_f['spamhaus_zen'],
         rep_f.get('threatfox_ip', False),
+        emailrep_malicious,
+        vt_ip_malicious,
+        vt_url_malicious,
+        vt_att_malicious,
+        gsb_hits,
         abuseipdb_score != -1 and abuseipdb_score >= _ABUSEIPDB_MALICIOUS,
         url_f['urlhaus_hits']        > 0,
         url_f['dbl_hits']            > 0,
@@ -535,6 +910,8 @@ def _calculate_verdict(
         auth_f['dkim']['signature_present'] and auth_f['dkim']['signature_valid'] is False,
     ]):
         return 'MOST LIKELY UNSAFE'
+
+
 
     missing_auth = sum([
         auth_f['spf']['result']   == 'missing',
@@ -550,7 +927,9 @@ def _calculate_verdict(
         auth_f['dmarc']['policy'] == 'none',
         header_f['mid_mismatch'],
         header_f['no_received'],
+        emailrep_suspicious,
         abuseipdb_score != -1 and abuseipdb_score >= _ABUSEIPDB_SUSPICIOUS,
+        vt_url_suspicious,
         any(r['dangerous']     for r in att_f['results']),
         any(r['mime_mismatch'] for r in att_f['results']),
     ])

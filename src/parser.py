@@ -9,6 +9,12 @@ from src.logger import get_logger
 
 logger = get_logger(__name__)
 
+# Matches plain text URLs: https://example.com/path?q=1
+_URL_PLAIN = re.compile(r'https?://[^\s<>\"\'\]]+')
+
+# Matches href/src attributes in HTML: href="https://..."
+_URL_HREF  = re.compile(r'(?:href|src)=["\']?(https?://[^"\'>\s]+)', re.IGNORECASE)
+
 
 def decode_subject(raw_subject):
     if not raw_subject:
@@ -20,9 +26,30 @@ def decode_subject(raw_subject):
 
 
 def extract_urls(text):
+    """
+    Extracts all URLs from text or HTML.
+    Handles both plain text URLs and HTML href/src attributes.
+    Strips trailing punctuation that is likely not part of the URL.
+    """
     if not text:
         return []
-    return re.findall(r'https?://[^\s<>\"]+', text)
+
+    plain = _URL_PLAIN.findall(text)
+    hrefs = _URL_HREF.findall(text)
+
+    # Strip common trailing punctuation that regex over-captures
+    def clean(url):
+        return re.sub(r'[.,;:!\?\)\]>]+$', '', url)
+
+    all_urls = [clean(u) for u in plain + hrefs]
+    # Deduplicate preserving order
+    seen = set()
+    result = []
+    for u in all_urls:
+        if u not in seen and len(u) > 10:
+            seen.add(u)
+            result.append(u)
+    return result
 
 
 def parse_email(message):
@@ -73,12 +100,19 @@ def parse_email(message):
             body_html = payload.decode('utf-8', errors='replace')
             urls     += extract_urls(body_html)
 
-    urls = list(set(urls))
-    logger.info(f'Parse complete – {len(attachments)} attachments, {len(urls)} URLs')
+    # Final dedup across both text and html parts
+    seen = set()
+    deduped = []
+    for u in urls:
+        if u not in seen:
+            seen.add(u)
+            deduped.append(u)
+
+    logger.info(f'Parse complete – {len(attachments)} attachments, {len(deduped)} URLs')
 
     return {
         'headers':     headers,
         'body':        {'text': body_text, 'html': body_html},
         'attachments': attachments,
-        'urls':        urls,
+        'urls':        deduped,
     }
