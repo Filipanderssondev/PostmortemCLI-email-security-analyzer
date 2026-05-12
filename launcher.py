@@ -57,8 +57,8 @@ def _kill_existing(runtime: str):
     # First check if port is actually in use
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        if s.connect_ex(('localhost', 1025)) != 0:
-            return  # Port is free, nothing to do
+        if s.connect_ex(('127.0.0.1', 1025)) != 0:
+            return
 
     print('  [*] Port 1025 in use — stopping existing container...')
 
@@ -143,11 +143,8 @@ def send_files(files: list):
             with open(filepath, "rb") as f:
                 message = message_from_bytes(f.read())
 
-            with smtplib.SMTP("localhost", 1025) as smtp:
+            with smtplib.SMTP("127.0.0.1", 1025) as smtp:
                 smtp.send_message(message)
-
-            print(f"[*] Sent: {filepath}")
-
         except FileNotFoundError:
             print(f"[ERROR] File not found: {filepath}")
 

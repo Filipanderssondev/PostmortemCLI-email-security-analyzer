@@ -21,19 +21,20 @@ _VERDICT_SYMBOL = {
 
 class PostMortemHandler:
     async def handle_DATA(self, server, session, envelope):
-        raw_bytes = envelope.content
-        message   = message_from_bytes(raw_bytes)
-
-        logger.info(f"Email received – From: {message['From']}, Subject: {message['Subject']}")
-
-        parsed = parse_email(message)
-        result = analyze(parsed, raw_bytes=raw_bytes)
-
-        _print_result(parsed, result)
-        from email.utils import parseaddr
-        _, sender_addr = parseaddr(parsed['headers'].get('from', ''))
-        report(parsed, result, send_to=sender_addr)
-        return '250 OK'
+        try:
+            raw_bytes = envelope.content
+            message   = message_from_bytes(raw_bytes)
+            logger.info(f"Email received – From: {message['From']}, Subject: {message['Subject']}")
+            parsed = parse_email(message)
+            result = analyze(parsed, raw_bytes=raw_bytes)
+            _print_result(parsed, result)
+            from email.utils import parseaddr
+            _, sender_addr = parseaddr(parsed['headers'].get('from', ''))
+            report(parsed, result, send_to=sender_addr)
+            return '250 OK'
+        except Exception as e:
+            logger.error(f'handle_DATA crashed: {e}', exc_info=True)
+        return '451 Internal error'
 
 def _print_result(parsed: dict, result: dict):
     verdict = result['verdict']
