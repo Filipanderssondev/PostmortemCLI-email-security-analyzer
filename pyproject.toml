@@ -16,4 +16,4 @@ py-modules = ["launcher", "main"]
 postmortemcli = "launcher:main"
 
 [project.optional-dependencies]
-dev = ["pytest", "aiosmtpd", "dnspython", "extract-msg"]
+dev = ["pytest", "aiosmtpd", "dnspython", "extract-msg", "requests", "dkimpy"]
