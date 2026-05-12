@@ -75,8 +75,7 @@ def _print_result(parsed: dict, result: dict):
     print(f"\n  VERDICT: [{symbol}] {verdict}")
     print(f"{'='*56}\n")
 
-
-def start_listener(host: str = '::', port: int = 1025):
+def start_listener(host: str = '0.0.0.0', port: int = 1025):
     async def _run():
         handler    = PostMortemHandler()
         controller = Controller(handler, hostname=host, port=port)
