@@ -14,7 +14,7 @@ from email.mime.text import MIMEText
 from src.logger import get_logger
 
 logger      = get_logger(__name__)
-_VERSION    = '0.2.3-beta'
+_VERSION    = '0.2.4-beta'
 _REPORT_DIR = '/tmp/postmortem/reports'
 _W          = 64   # line width
 
