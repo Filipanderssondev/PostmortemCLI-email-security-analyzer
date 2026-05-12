@@ -21,7 +21,10 @@ def decode_subject(raw_subject):
         return ''
     decoded, encoding = decode_header(raw_subject)[0]
     if isinstance(decoded, bytes):
-        return decoded.decode(encoding or 'utf-8', errors='replace')
+        try:
+            return decoded.decode(encoding or 'utf-8', errors='replace')
+        except (LookupError, TypeError):
+            return decoded.decode('utf-8', errors='replace')
     return decoded
 
 

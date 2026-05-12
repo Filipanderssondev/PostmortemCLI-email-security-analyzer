@@ -8,7 +8,6 @@ from aiosmtpd.controller import Controller
 from src.parser import parse_email
 from src.analyzer import analyze
 from src.logger import get_logger
-from src.reporter import report
 
 logger = get_logger(__name__)
 
@@ -21,20 +20,17 @@ _VERDICT_SYMBOL = {
 
 class PostMortemHandler:
     async def handle_DATA(self, server, session, envelope):
-        try:
-            raw_bytes = envelope.content
-            message   = message_from_bytes(raw_bytes)
-            logger.info(f"Email received – From: {message['From']}, Subject: {message['Subject']}")
-            parsed = parse_email(message)
-            result = analyze(parsed, raw_bytes=raw_bytes)
-            _print_result(parsed, result)
-            from email.utils import parseaddr
-            _, sender_addr = parseaddr(parsed['headers'].get('from', ''))
-            report(parsed, result, send_to=sender_addr)
-            return '250 OK'
-        except Exception as e:
-            logger.error(f'handle_DATA crashed: {e}', exc_info=True)
-        return '451 Internal error'
+        raw_bytes = envelope.content
+        message   = message_from_bytes(raw_bytes)
+
+        logger.info(f"Email received – From: {message['From']}, Subject: {message['Subject']}")
+
+        parsed = parse_email(message)
+        result = analyze(parsed, raw_bytes=raw_bytes)
+
+        _print_result(parsed, result)
+        return '250 OK'
+
 
 def _print_result(parsed: dict, result: dict):
     verdict = result['verdict']
@@ -80,14 +76,15 @@ def _print_result(parsed: dict, result: dict):
     print(f"{'='*56}\n")
 
 
-def start_listener(host: str = '0.0.0.0', port: int = 1025):
+def start_listener(host: str = '::', port: int = 1025):
     async def _run():
         handler    = PostMortemHandler()
         controller = Controller(handler, hostname=host, port=port)
         controller.start()
         logger.info(f'SMTP listener started on {host}:{port}')
         print(f'[*] SMTP listener running on {host}:{port}')
-        print(f'[*] Forward suspicious emails to: scan@localhost\n')
+        print(f'[*] SMTP endpoint: localhost:{port}')
+        print(f'[*] Submit emails using: postmortemcli send <file.eml>\n')
         try:
             await asyncio.sleep(float('inf'))
         except KeyboardInterrupt:
