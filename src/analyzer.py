@@ -22,6 +22,7 @@ import re
 import hashlib
 import requests
 import dns.resolver
+import time
 from email.utils import parseaddr
 from src.logger import get_logger
 
@@ -69,6 +70,19 @@ _MIME_MAGIC = {
 
 _SPAM_TOOLS = frozenset({'ratware', 'mass mailer', 'advance mailer', 'dark mailer'})
 
+# Known legitimate CDN/infrastructure domains — skip DBL check
+_DBL_WHITELIST = frozenset({
+    'fonts.googleapis.com',
+    'fonts.gstatic.com',
+    'ajax.googleapis.com',
+    'apis.google.com',
+    'cdnjs.cloudflare.com',
+    'cdn.jsdelivr.net',
+    'unpkg.com',
+    'stackpath.bootstrapcdn.com',
+    'maxcdn.bootstrapcdn.com',
+    'code.jquery.com',
+})
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
 
@@ -724,7 +738,7 @@ def check_urls(urls: list) -> dict:
         if m:
             domain = m.group(1).lower().rstrip('.')
 
-            if _dnsbl(domain, 'dbl.spamhaus.org'):
+            if domain not in _DBL_WHITELIST and _dnsbl(domain, 'dbl.spamhaus.org'):
                 entry['spamhaus_dbl'] = True
                 if domain not in _flagged_dbl_domains:
                     flags.append(f'URL domain on Spamhaus DBL: {domain}')
