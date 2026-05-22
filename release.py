@@ -75,9 +75,20 @@ def scan_and_update(old_version: str, new_version: str) -> list:
 
 
 def git_commit_and_tag(version: str, updated_files: list):
+    # Get commits since last tag for changelog
+    last_tag = run(['git', 'describe', '--tags', '--abbrev=0'], check=False)
+    if last_tag:
+        changelog = run(['git', 'log', f'{last_tag}..HEAD', '--oneline', '--no-merges'], check=False)
+    else:
+        changelog = run(['git', 'log', '--oneline', '--no-merges', '-10'], check=False)
+
+    commit_msg = f'chore: bump version to {version}'
+    if changelog:
+        commit_msg += f'\n\nChanges since {last_tag or "initial"}:\n{changelog}'
+
     if updated_files:
-        run(['git', 'add'] + updated_files)
-        run(['git', 'commit', '-m', f'chore: bump version to {version}'])
+        run(['git', 'add', '-u'])
+        run(['git', 'commit', '-m', commit_msg])
         print(f'  [✓] Committed {len(updated_files)} file(s)')
     else:
         print('  [~] No files needed updating')
@@ -90,10 +101,8 @@ def git_commit_and_tag(version: str, updated_files: list):
             f'  git tag -d v{version}\n'
             f'  git push origin --delete v{version}'
         )
-
     run(['git', 'tag', f'v{version}'])
     print(f'  [✓] Created tag v{version}')
-
     run(['git', 'push'])
     run(['git', 'push', 'origin', f'v{version}'])
     print(f'  [✓] Pushed → CI/CD is building the image')
