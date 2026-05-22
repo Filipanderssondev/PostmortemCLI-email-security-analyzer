@@ -195,16 +195,18 @@ def _urlhaus(url: str) -> bool:
 
 
 def _malwarebazaar(sha256_hash: str) -> bool:
+    key = os.environ.get('MALWAREBAZAAR_API_KEY', '')
+    headers = {'Auth-Key': key} if key else {}
     try:
         r = requests.post(
             'https://mb-api.abuse.ch/api/v1/',
             data={'query': 'get_info', 'hash': sha256_hash},
+            headers=headers,
             timeout=_TIMEOUT,
         )
         return r.status_code == 200 and r.json().get('query_status') == 'ok'
     except Exception:
         return False
-
 
 def _threatfox(ioc: str) -> bool:
     """
