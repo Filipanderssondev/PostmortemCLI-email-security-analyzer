@@ -115,9 +115,13 @@ def run_container(args: list):
 
     needs_port = args[0] in ('start', 'listen') if args else False
 
+    env_file = os.path.join(os.getcwd(), '.env')
+    env_flag = ["--env-file", env_file] if os.path.exists(env_file) else []
+
     cmd = [
         runtime, "run", "-it", "--rm",
         *pull_flag,
+        *env_flag,
         "-v", f"{get_mount_path()}:/data",
         *(["-p", "1025:1025"] if needs_port else []),
         get_image(),

@@ -16,8 +16,6 @@ from src.parser import parse_email
 from src.analyzer import analyze
 from src.smtp_reciever import start_listener
 from src.reporter import report
-from dotenv import load_dotenv
-load_dotenv()
 
 logger = get_logger(__name__)
 
