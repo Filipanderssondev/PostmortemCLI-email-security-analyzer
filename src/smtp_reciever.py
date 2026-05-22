@@ -1,81 +1,63 @@
 # src/smtp_reciever.py
-# SMTP handler – receives forwarded emails, passes raw bytes + parsed dict to analyzer.
-# Not an entrypoint – started by main.py via start_listener()
+# SMTP handler – receives forwarded emails via SMTP on port 1025.
+# Queues incoming messages and processes them sequentially.
+# Pipeline: smtp_reciever → parser → analyzer → reporter → sender
 
 import asyncio
+import queue
+import threading
 from email import message_from_bytes
 from aiosmtpd.controller import Controller
 from src.parser import parse_email
 from src.analyzer import analyze
+from src.reporter import report
 from src.logger import get_logger
 
 logger = get_logger(__name__)
 
-_VERDICT_SYMBOL = {
-    'MOST LIKELY SAFE':                    '✓',
-    'MOST LIKELY UNSAFE':                   '✗',
-    'FURTHER ANALYSIS REQUIRED': '?',
-}
+# Thread-safe queue for incoming emails
+_email_queue = queue.Queue()
+
+
+def _process_queue():
+    """Worker thread — processes emails from queue sequentially."""
+    while True:
+        try:
+            raw_bytes = _email_queue.get()
+            if raw_bytes is None:
+                break
+            message = message_from_bytes(raw_bytes)
+            parsed  = parse_email(message)
+            result  = analyze(parsed, raw_bytes=raw_bytes)
+            report(parsed, result)
+            # TODO: sender.send_report() when implemented
+        except Exception as e:
+            logger.error(f'Error processing email: {e}')
+        finally:
+            _email_queue.task_done()
 
 
 class PostMortemHandler:
     async def handle_DATA(self, server, session, envelope):
-        raw_bytes = envelope.content
-        message   = message_from_bytes(raw_bytes)
-
-        logger.info(f"Email received – From: {message['From']}, Subject: {message['Subject']}")
-
-        parsed = parse_email(message)
-        result = analyze(parsed, raw_bytes=raw_bytes)
-
-        _print_result(parsed, result)
+        try:
+            raw_bytes = envelope.content
+            message   = message_from_bytes(raw_bytes)
+            logger.info(
+                f"Email received – From: {message['From']}, "
+                f"Subject: {message['Subject']}"
+            )
+            _email_queue.put(raw_bytes)
+        except Exception as e:
+            logger.error(f'Failed to queue email: {e}')
+            return '451 Internal error'
         return '250 OK'
 
 
-def _print_result(parsed: dict, result: dict):
-    verdict = result['verdict']
-    symbol  = _VERDICT_SYMBOL.get(verdict, '?')
-    auth    = result['auth_findings']
-    rep     = result['rep_findings']
-    urls    = result['url_findings']
-    atts    = result['att_findings']
-
-    print(f"\n{'='*56}")
-    print(f"  EMAIL RECEIVED VIA SMTP")
-    print(f"{'='*56}")
-    print(f"  From:         {parsed['headers']['from']}")
-    print(f"  Subject:      {parsed['headers']['subject']}")
-    print(f"  Domain:       {result['domain']}")
-    print(f"  Sender IP:    {result['sender_ip'] or 'unknown'}")
-    print(f"  Hops:         {result['header_findings']['received_hops']}")
-    print(f"  URLs:         {len(parsed['urls'])} ({urls['checked']} checked)")
-    print(f"  Attachments:  {atts['count']}")
-
-    print(f"\n  Authentication:")
-    print(f"    SPF:    {auth['spf']['result']}")
-    print(f"    DMARC:  {auth['dmarc']['result']} (policy={auth['dmarc']['policy']})")
-
-    dkim = auth['dkim']
-    dkim_status = dkim['result']
-    if dkim['signature_present']:
-        dkim_status += f" | sig={'valid' if dkim['signature_valid'] else 'INVALID' if dkim['signature_valid'] is False else 'unverified'}"
-    print(f"    DKIM:   {dkim_status}")
-
-    print(f"    Spamhaus ZEN: {'LISTED' if rep['spamhaus_zen'] else 'clean'}")
-    if urls['urlhaus_hits'] or urls['dbl_hits']:
-        print(f"    URLhaus hits: {urls['urlhaus_hits']} | DBL hits: {urls['dbl_hits']}")
-    if atts['malwarebazaar_hits']:
-        print(f"    MalwareBazaar hits: {atts['malwarebazaar_hits']}")
-
-    if result['all_flags']:
-        print(f"\n  Flags ({len(result['all_flags'])}):")
-        for flag in result['all_flags']:
-            print(f"    ⚠  {flag}")
-
-    print(f"\n  VERDICT: [{symbol}] {verdict}")
-    print(f"{'='*56}\n")
-
 def start_listener(host: str = '0.0.0.0', port: int = 1025):
+    # Start worker thread for processing queue
+    worker = threading.Thread(target=_process_queue, daemon=True)
+    worker.start()
+
     async def _run():
         handler    = PostMortemHandler()
         controller = Controller(handler, hostname=host, port=port)
@@ -91,5 +73,4 @@ def start_listener(host: str = '0.0.0.0', port: int = 1025):
         finally:
             controller.stop()
             logger.info('SMTP listener stopped')
-
     asyncio.run(_run())
