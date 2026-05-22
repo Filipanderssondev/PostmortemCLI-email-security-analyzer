@@ -115,7 +115,7 @@ def run_container(args: list):
 
     needs_port = args[0] in ('start', 'listen') if args else False
 
-    env_file = os.path.join(os.getcwd(), '.env')
+    env_file = os.path.expanduser('~/.postmortemcli/.env')
     env_flag = ["--env-file", env_file] if os.path.exists(env_file) else []
 
     cmd = [
