@@ -3,3 +3,4 @@ dnspython
 extract-msg
 dkimpy 
 requests
+python-dotenv
