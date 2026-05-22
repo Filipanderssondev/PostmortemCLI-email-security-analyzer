@@ -14,7 +14,7 @@ from email.mime.text import MIMEText
 from src.logger import get_logger
 
 logger      = get_logger(__name__)
-_VERSION    = '0.2.4-beta'
+_VERSION    = '0.2.6-beta'
 _REPORT_DIR = '/tmp/postmortem/reports'
 _W          = 64   # line width
 
@@ -94,7 +94,7 @@ def _headers_section(hf):
     email = hf.get('from_email', '')
     out.append(f'\n  EmailRep  (sender: {email or "unknown"}):')
     if er is None:
-        out.append(_check_row('Status:', '–  not configured  (set EMAILREP_API_KEY or none needed for basic)'))
+        out.append(_check_row('Status:', '–  unavailable  (rate limited or key not configured)'))
     else:
         rep_icon = '⚠ ' if er['suspicious'] or er['blacklisted'] or er['malicious_activity'] else '✓ '
         out.append(_check_row('Reputation:',       f'{rep_icon} {er["reputation"]}  ({er["references"]} references)'))
@@ -270,15 +270,15 @@ def _sources_section():
     out = [_section('THREAT INTELLIGENCE SOURCES')]
     out.append('')
     for name, kind, purpose, key in [
-        ('Spamhaus ZEN',  'DNSBL', 'Sender IP blocklist',             'no key'),
-        ('Spamhaus DBL',  'DNSBL', 'URL domain blocklist',            'no key'),
-        ('URLhaus',       'API',   'Malicious URL database',          'no key'),
-        ('MalwareBazaar', 'API',   'Malware hash database (SHA256)',  'no key'),
-        ('ThreatFox',     'API',   'IOC: IPs, domains, hashes',       'no key'),
-        ('AbuseIPDB',     'API',   'IP abuse confidence 0–100',       'optional key'),
-        ('VirusTotal',    'API',   'URL/file/IP — 70+ AV engines',    'required key'),
-        ('EmailRep',      'API',   'Sender email address reputation',  'optional key'),
-        ('Google SafeBrowsing', 'API', 'URL phishing/malware check', 'required key'),
+        ('Spamhaus ZEN',        'DNSBL', 'Sender IP blocklist',              'no key'),
+        ('Spamhaus DBL',        'DNSBL', 'URL domain blocklist',             'no key'),
+        ('URLhaus',             'API',   'Malicious URL database',           'no key'),
+        ('MalwareBazaar',       'API',   'Malware hash database (SHA256)',   'auth-key required'),
+        ('ThreatFox',           'API',   'IOC: IPs, domains, hashes',        'no key'),
+        ('AbuseIPDB',           'API',   'IP abuse confidence 0–100',        'optional key'),
+        ('VirusTotal',          'API',   'URL/file/IP — 70+ AV engines',     'required key'),
+        ('EmailRep',            'API',   'Sender email address reputation',  'optional key'),
+        ('Google SafeBrowsing', 'API',   'URL phishing/malware check',       'required key'),
     ]:
         out.append(f'  {name:<16} [{kind:<4}]  {purpose:<36} {key}')
     out.append('')
