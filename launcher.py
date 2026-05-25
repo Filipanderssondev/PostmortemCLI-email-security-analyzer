@@ -5,16 +5,23 @@
 
 import os
 import sys
+import glob
+import shutil
 import subprocess
 
+CONFIG_DIR = os.path.expanduser('~/.postmortemcli')
+ENV_FILE   = os.path.join(CONFIG_DIR, '.env')
+CA_CERT    = os.path.join(CONFIG_DIR, 'smhi-ca.pem')
+
+# ── Environment detection ─────────────────────────────────────────────────────
 
 def is_inside_container() -> bool:
-    return os.environ.get("POSTMORTEM_CONTAINER") == "1"
+    return os.environ.get('POSTMORTEM_CONTAINER') == '1'
 
 
 def find_runtime() -> str:
-    finder = "where" if sys.platform == "win32" else "which"
-    for candidate in ["podman", "docker"]:
+    finder = 'where' if sys.platform == 'win32' else 'which'
+    for candidate in ['podman', 'docker']:
         result = subprocess.run([finder, candidate], capture_output=True)
         if result.returncode == 0:
             return candidate
@@ -22,10 +29,12 @@ def find_runtime() -> str:
 
 
 def get_image() -> str:
+    image = _read_env_key('POSTMORTEM_IMAGE')
+    if image:
+        return image
     return os.environ.get(
-        "POSTMORTEM_IMAGE",
-        "docker.io/filipanderssondev/postmortemcli:latest"
-        # Override with: export POSTMORTEM_IMAGE=your-registry/image:tag
+        'POSTMORTEM_IMAGE',
+        'docker.io/filipanderssondev/postmortemcli:latest'
     )
 
 
@@ -33,28 +42,276 @@ def is_private_registry() -> bool:
     """
     Detects if the configured image is from a private registry.
     Public registries are pulled automatically.
-    Private registries require manual login and pull – local image is used.
+    Private registries require manual login and pull — local image is used.
     """
-    public_registries = ["docker.io", "ghcr.io", "registry.hub.docker.com", "quay.io"]
+    public_registries = ['docker.io', 'ghcr.io', 'registry.hub.docker.com', 'quay.io']
     return not any(registry in get_image() for registry in public_registries)
+
+
+def is_smhi_environment() -> bool:
+    """
+    Detects SMHI enterprise environment.
+    Signal: RHEL operating system + private registry configured.
+    RHEL is standard at SMHI. Private registry means POSTMORTEM_IMAGE
+    points to an internal Harbor registry, not Docker Hub.
+    """
+    is_rhel = os.path.exists('/etc/redhat-release')
+    has_private_registry = is_private_registry()
+    return is_rhel and has_private_registry
 
 
 def get_mount_path() -> str:
     cwd = os.getcwd()
-    if sys.platform == "win32":
+    if sys.platform == 'win32':
         drive, rest = os.path.splitdrive(cwd)
-        return f"/{drive.replace(':', '').lower()}{rest.replace(chr(92), '/')}"
+        return f'/{drive.replace(":", "").lower()}{rest.replace(chr(92), "/")}'
     return cwd
 
 
-def _kill_existing(runtime: str):
-    """
-    Frees port 1025 before starting a new container.
-    Kills any process holding the port at the host level.
-    """
-    import socket
+def _read_env_key(key: str) -> str:
+    """Read a single key from ~/.postmortemcli/.env without loading full environment."""
+    if not os.path.exists(ENV_FILE):
+        return ''
+    with open(ENV_FILE) as f:
+        for line in f:
+            line = line.strip()
+            if line.startswith(f'{key}='):
+                return line.split('=', 1)[1].strip()
+    return ''
 
-    # First check if port is actually in use
+
+def _get_ca_flags() -> list:
+    """
+    If ~/.postmortemcli/smhi-ca.pem exists, mount it into the container
+    and set REQUESTS_CA_BUNDLE so Python uses it automatically.
+
+    This fixes SSL verification failures caused by enterprise SSL inspection
+    proxies that intercept HTTPS traffic and re-sign certificates with an
+    internal CA the container does not trust.
+    """
+    if not os.path.exists(CA_CERT):
+        return []
+    return [
+        '-v', f'{CA_CERT}:/etc/ssl/certs/smhi-ca.pem:ro',
+        '--env', 'REQUESTS_CA_BUNDLE=/etc/ssl/certs/smhi-ca.pem',
+        '--env', 'SSL_CERT_FILE=/etc/ssl/certs/smhi-ca.pem',
+    ]
+
+
+# ── Setup ─────────────────────────────────────────────────────────────────────
+
+def _find_system_ca_certs() -> list:
+    """
+    Searches standard system CA trust directories for organisation
+    certificates added by IT during workstation onboarding.
+    Returns list of found certificate file paths.
+    """
+    search_patterns = [
+        '/etc/pki/ca-trust/source/anchors/*.pem',
+        '/etc/pki/ca-trust/source/anchors/*.crt',
+        '/usr/local/share/ca-certificates/*.pem',
+        '/usr/local/share/ca-certificates/*.crt',
+    ]
+    found = []
+    for pattern in search_patterns:
+        found.extend(glob.glob(pattern))
+    return found
+
+
+def _copy_ca_cert(cert_path: str):
+    """Copy a CA certificate to ~/.postmortemcli/smhi-ca.pem."""
+    shutil.copy2(cert_path, CA_CERT)
+
+
+def _write_env_file(keys: dict):
+    """
+    Write API keys to ~/.postmortemcli/.env.
+    Preserves existing values if user presses Enter without input.
+    """
+    existing = {}
+    if os.path.exists(ENV_FILE):
+        with open(ENV_FILE) as f:
+            for line in f:
+                line = line.strip()
+                if '=' in line and not line.startswith('#'):
+                    k, v = line.split('=', 1)
+                    existing[k.strip()] = v.strip()
+
+    merged = {**existing, **{k: v for k, v in keys.items() if v}}
+
+    with open(ENV_FILE, 'w') as f:
+        f.write('# PostmortemCLI — local configuration\n')
+        f.write('# Generated by: postmortemcli setup\n')
+        f.write('# Location: ~/.postmortemcli/.env\n')
+        f.write('#\n')
+        f.write('# Format rules:\n')
+        f.write('#   KEY=value          correct\n')
+        f.write('#   KEY="value"        wrong — quotes become part of the value\n')
+        f.write('#   KEY=value # note   wrong — comment becomes part of the value\n')
+        f.write('#   export KEY=value   wrong — export prefix breaks --env-file\n')
+        f.write('\n')
+        f.write('# Threat intelligence API keys\n')
+        for k, v in merged.items():
+            f.write(f'{k}={v}\n')
+
+    os.chmod(ENV_FILE, 0o600)
+
+
+def _prompt_key(name: str, description: str, url: str, existing: str) -> str:
+    display = '(already set — press Enter to keep)' if existing else '(press Enter to skip)'
+    print(f'\n  {name}')
+    print(f'  {description}')
+    print(f'  {url}')
+    val = input(f'  Value {display}: ').strip()
+    return val if val else existing
+
+
+def cmd_setup():
+    """
+    First-time setup. Run once per machine.
+    Detects environment automatically — no flags needed.
+    Safe to re-run: existing values are preserved.
+    """
+    print()
+    print('  ════════════════════════════════════════════════')
+    print('    PostmortemCLI — Setup')
+    print('  ════════════════════════════════════════════════')
+
+    os.makedirs(CONFIG_DIR, exist_ok=True)
+
+    smhi = is_smhi_environment()
+
+    if smhi:
+        print()
+        print('  SMHI environment detected.')
+
+    # ── API keys ──────────────────────────────────────────────────────────────
+
+    print()
+    print('  ── API Keys ─────────────────────────────────────')
+    print('  Optional. Press Enter to skip.')
+
+    existing = {}
+    if os.path.exists(ENV_FILE):
+        with open(ENV_FILE) as f:
+            for line in f:
+                line = line.strip()
+                if '=' in line and not line.startswith('#'):
+                    k, v = line.split('=', 1)
+                    existing[k.strip()] = v.strip()
+
+    keys = {
+        'VIRUSTOTAL_API_KEY': _prompt_key(
+            'VIRUSTOTAL_API_KEY',
+            '70+ AV engines — URL and file scanning',
+            'https://www.virustotal.com',
+            existing.get('VIRUSTOTAL_API_KEY', ''),
+        ),
+        'ABUSEIPDB_API_KEY': _prompt_key(
+            'ABUSEIPDB_API_KEY',
+            'IP abuse confidence score',
+            'https://www.abuseipdb.com/register',
+            existing.get('ABUSEIPDB_API_KEY', ''),
+        ),
+        'GOOGLE_SAFE_BROWSING_KEY': _prompt_key(
+            'GOOGLE_SAFE_BROWSING_KEY',
+            'Google phishing and malware URL detection',
+            'https://console.cloud.google.com',
+            existing.get('GOOGLE_SAFE_BROWSING_KEY', ''),
+        ),
+        'MALWAREBAZAAR_API_KEY': _prompt_key(
+            'MALWAREBAZAAR_API_KEY',
+            'Malware hash database',
+            'https://auth.abuse.ch',
+            existing.get('MALWAREBAZAAR_API_KEY', ''),
+        ),
+        'EMAILREP_API_KEY': _prompt_key(
+            'EMAILREP_API_KEY',
+            'Sender email reputation (requires manual approval)',
+            'https://emailrep.io',
+            existing.get('EMAILREP_API_KEY', ''),
+        ),
+    }
+
+    if smhi:
+        keys['POSTMORTEM_IMAGE'] = _prompt_key(
+            'POSTMORTEM_IMAGE',
+            'Full image path in SMHI Harbor registry',
+            'Contact SMHI IT',
+            existing.get('POSTMORTEM_IMAGE', ''),
+        )
+
+    _write_env_file(keys)
+    print(f'\n  ✓ Config saved to {ENV_FILE}')
+
+    # ── CA certificate (SMHI only) ─────────────────────────────────────────────
+
+    if smhi:
+        print()
+        print('  ── SSL Certificate ──────────────────────────────')
+        print('  Searching for organisation CA certificate...')
+
+        # Skip if already configured — never ask twice
+        if os.path.exists(CA_CERT):
+            print(f'  ✓ Certificate already configured — skipping.')
+
+        else:
+            certs = _find_system_ca_certs()
+
+            if len(certs) == 1:
+                _copy_ca_cert(certs[0])
+                print(f'  ✓ Certificate copied from {certs[0]}')
+
+            elif len(certs) > 1:
+                print()
+                print('  Multiple certificates found:')
+                for i, path in enumerate(certs, 1):
+                    print(f'    [{i}] {os.path.basename(path)}')
+                print()
+                choice = input('  Which one is the organisation root CA? [number]: ').strip()
+                try:
+                    chosen = certs[int(choice) - 1]
+                    _copy_ca_cert(chosen)
+                    print(f'  ✓ Certificate copied — this will not be asked again.')
+                except (ValueError, IndexError):
+                    print('  ⚠  Invalid choice — skipping.')
+                    print(f'  Re-run setup or copy manually to {CA_CERT}')
+
+            else:
+                print('  ⚠  No certificates found in system CA store.')
+                print(f'  Copy the organisation root CA to {CA_CERT}')
+
+        # ── bashrc ────────────────────────────────────────────────────────────
+        bashrc = os.path.expanduser('~/.bashrc')
+        try:
+            content = open(bashrc).read()
+            if 'postmortemcli-update' not in content:
+                with open(bashrc, 'a') as f:
+                    f.write('\n# PostmortemCLI\n')
+                    f.write(
+                        "alias postmortemcli-update='~/.postmortemcli/setup.sh'\n"
+                    )
+                print('  ✓ postmortemcli-update alias added to ~/.bashrc')
+                print('  Run: source ~/.bashrc')
+        except Exception:
+            pass
+
+    # ── Done ──────────────────────────────────────────────────────────────────
+
+    print()
+    print('  ════════════════════════════════════════════════')
+    print('  Setup complete.')
+    print()
+    print('  Run: postmortemcli start')
+    print('  ════════════════════════════════════════════════')
+    print()
+
+
+# ── Container lifecycle ───────────────────────────────────────────────────────
+
+def _kill_existing(runtime: str):
+    """Frees port 1025 before starting a new container."""
+    import socket
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         if s.connect_ex(('127.0.0.1', 1025)) != 0:
@@ -62,72 +319,59 @@ def _kill_existing(runtime: str):
 
     print('  [*] Port 1025 in use — stopping existing container...')
 
-    # Stop via podman first
     try:
-        result = subprocess.run(
-            [runtime, 'ps', '-q'],
-            capture_output=True, text=True
-        )
+        result = subprocess.run([runtime, 'ps', '-q'], capture_output=True, text=True)
         for cid in result.stdout.strip().split('\n'):
             if cid:
                 port_result = subprocess.run(
-                    [runtime, 'port', cid, '1025'],
-                    capture_output=True, text=True
+                    [runtime, 'port', cid, '1025'], capture_output=True, text=True
                 )
                 if port_result.stdout.strip():
                     subprocess.run([runtime, 'stop', cid], capture_output=True)
                     print(f'  [*] Stopped container {cid[:12]}')
-                    import time
-                    time.sleep(1)
+                    import time; time.sleep(1)
                     return
     except Exception:
         pass
 
-    # Fallback — kill whatever process holds the port (Linux)
     try:
-        subprocess.run(
-            ['fuser', '-k', '1025/tcp'],
-            capture_output=True
-        )
-        import time
-        time.sleep(0.5)
+        subprocess.run(['fuser', '-k', '1025/tcp'], capture_output=True)
+        import time; time.sleep(0.5)
         print('  [*] Freed port 1025')
     except Exception:
         pass
+
 
 def run_container(args: list):
     runtime = find_runtime()
 
     if not runtime:
-        print("[ERROR] Neither podman nor docker found.")
-        if sys.platform == "win32":
-            print("        Install Docker Desktop: https://www.docker.com/products/docker-desktop")
+        print('[ERROR] Neither podman nor docker found.')
+        if sys.platform == 'win32':
+            print('        Install Docker Desktop: https://www.docker.com/products/docker-desktop')
         else:
-            print("        Install podman or docker.")
+            print('        Install podman or docker.')
         sys.exit(1)
 
     if args and args[0] in ('start', 'listen'):
         _kill_existing(runtime)
 
-    pull_flag = ["--pull", "never"] if is_private_registry() else []
-    # Private registry: use local image only – manual pull required
-    # Public registry: pull automatically on first run
-
+    pull_flag  = ['--pull', 'never'] if is_private_registry() else []
     needs_port = args[0] in ('start', 'listen') if args else False
-
-    env_file = os.path.expanduser('~/.postmortemcli/.env')
-    env_flag = ["--env-file", env_file] if os.path.exists(env_file) else []
+    env_flag   = ['--env-file', ENV_FILE] if os.path.exists(ENV_FILE) else []
+    ca_flags   = _get_ca_flags()
 
     cmd = [
-        runtime, "run", "-it", "--rm",
+        runtime, 'run', '-it', '--rm',
         *pull_flag,
         *env_flag,
-        "-v", f"{get_mount_path()}:/data",
-        *(["-p", "1025:1025"] if needs_port else []),
+        *ca_flags,
+        '-v', f'{get_mount_path()}:/data',
+        *(['-p', '1025:1025'] if needs_port else []),
         get_image(),
     ] + args
 
-    if sys.platform == "win32":
+    if sys.platform == 'win32':
         sys.exit(subprocess.run(cmd).returncode)
     else:
         os.execvp(runtime, cmd)
@@ -138,37 +382,34 @@ def send_files(files: list):
     from email import message_from_bytes
 
     if not files:
-        print("[ERROR] Provide at least one file.")
-        print("Usage: postmortemcli send <file.eml> [files...]")
+        print('[ERROR] Provide at least one file.')
+        print('Usage: postmortemcli send <file.eml> [files...]')
         sys.exit(1)
 
     for filepath in files:
         try:
-            with open(filepath, "rb") as f:
+            with open(filepath, 'rb') as f:
                 message = message_from_bytes(f.read())
-
-            with smtplib.SMTP("127.0.0.1", 1025) as smtp:
+            with smtplib.SMTP('127.0.0.1', 1025) as smtp:
                 smtp.send_message(message)
         except FileNotFoundError:
-            print(f"[ERROR] File not found: {filepath}")
-
+            print(f'[ERROR] File not found: {filepath}')
         except ConnectionRefusedError:
-            print("[ERROR] Nothing listening on port 1025.")
+            print('[ERROR] Nothing listening on port 1025.')
             print("        Run 'postmortemcli start' first.")
             sys.exit(1)
 
+
+# ── Entry point ───────────────────────────────────────────────────────────────
 
 USAGE = """
 PostmortemCLI – Email Security Analysis Tool
 
 Usage:
+  postmortemcli setup                    First-time setup (run once per machine)
   postmortemcli start                    Start container + SMTP listener
   postmortemcli scan <file> [files...]   Scan email files directly
   postmortemcli send <file> [files...]   Send files to running SMTP listener
-
-Configuration:
-  Override image via environment variable:
-  export POSTMORTEM_IMAGE=your-registry/image:tag
 """
 
 
@@ -186,9 +427,11 @@ def main():
 
     command = args[0]
 
-    if command == "send":
+    if command == 'setup':
+        cmd_setup()
+    elif command == 'send':
         send_files(args[1:])
-    elif command in ("start", "scan", "listen"):
+    elif command in ('start', 'scan', 'listen'):
         run_container(args)
     else:
         print(f"[ERROR] Unknown command: '{command}'")
@@ -196,5 +439,5 @@ def main():
         sys.exit(1)
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
