@@ -11,7 +11,7 @@ import subprocess
 
 CONFIG_DIR = os.path.expanduser('~/.postmortemcli')
 ENV_FILE   = os.path.join(CONFIG_DIR, '.env')
-CA_CERT    = os.path.join(CONFIG_DIR, 'smhi-ca.pem')
+CA_CERT    = os.path.join(CONFIG_DIR, 'org-ca.pem')
 
 # ── Environment detection ─────────────────────────────────────────────────────
 
@@ -48,12 +48,12 @@ def is_private_registry() -> bool:
     return not any(registry in get_image() for registry in public_registries)
 
 
-def is_smhi_environment() -> bool:
+def is_enterprise_environment() -> bool:
     """
-    Detects SMHI enterprise environment.
+    Detects Enterprise environment.
     Signal: RHEL operating system + private registry configured.
-    RHEL is standard at SMHI. Private registry means POSTMORTEM_IMAGE
-    points to an internal Harbor registry, not Docker Hub.
+    RHEL is common in enterprise environments. Private registry means POSTMORTEM_IMAGE
+    points to an internal private registry, not Docker Hub.
     """
     is_rhel = os.path.exists('/etc/redhat-release')
     has_private_registry = is_private_registry()
@@ -82,7 +82,7 @@ def _read_env_key(key: str) -> str:
 
 def _get_ca_flags() -> list:
     """
-    If ~/.postmortemcli/smhi-ca.pem exists, mount it into the container
+    If ~/.postmortemcli/org-ca.pem exists, mount it into the container
     and set REQUESTS_CA_BUNDLE so Python uses it automatically.
 
     This fixes SSL verification failures caused by enterprise SSL inspection
@@ -92,9 +92,9 @@ def _get_ca_flags() -> list:
     if not os.path.exists(CA_CERT):
         return []
     return [
-        '-v', f'{CA_CERT}:/etc/ssl/certs/smhi-ca.pem:ro',
-        '--env', 'REQUESTS_CA_BUNDLE=/etc/ssl/certs/smhi-ca.pem',
-        '--env', 'SSL_CERT_FILE=/etc/ssl/certs/smhi-ca.pem',
+        '-v', f'{CA_CERT}:/etc/ssl/certs/org-ca.pem:ro',
+        '--env', 'REQUESTS_CA_BUNDLE=/etc/ssl/certs/org-ca.pem',
+        '--env', 'SSL_CERT_FILE=/etc/ssl/certs/org-ca.pem',
     ]
 
 
@@ -119,7 +119,7 @@ def _find_system_ca_certs() -> list:
 
 
 def _copy_ca_cert(cert_path: str):
-    """Copy a CA certificate to ~/.postmortemcli/smhi-ca.pem."""
+    """Copy a CA certificate to ~/.postmortemcli/org-ca.pem."""
     shutil.copy2(cert_path, CA_CERT)
 
 
@@ -179,11 +179,11 @@ def cmd_setup():
 
     os.makedirs(CONFIG_DIR, exist_ok=True)
 
-    smhi = is_smhi_environment()
+    enterprise = is_enterprise_environment()
 
-    if smhi:
+    if enterprise:
         print()
-        print('  SMHI environment detected.')
+        print('  Enterprise environment detected.')
 
     # ── API keys ──────────────────────────────────────────────────────────────
 
@@ -233,20 +233,20 @@ def cmd_setup():
         ),
     }
 
-    if smhi:
+    if enterprise:
         keys['POSTMORTEM_IMAGE'] = _prompt_key(
             'POSTMORTEM_IMAGE',
-            'Full image path in SMHI Harbor registry',
-            'Contact SMHI IT',
+            'Full image path in private registry',
+            'Contact your IT department',
             existing.get('POSTMORTEM_IMAGE', ''),
         )
 
     _write_env_file(keys)
     print(f'\n  ✓ Config saved to {ENV_FILE}')
 
-    # ── CA certificate (SMHI only) ─────────────────────────────────────────────
+    # ── CA certificate (enterprise only) ────────────────────────────────────────────
 
-    if smhi:
+    if enterprise:
         print()
         print('  ── SSL Certificate ──────────────────────────────')
         print('  Searching for organisation CA certificate...')
