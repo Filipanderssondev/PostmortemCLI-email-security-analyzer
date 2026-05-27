@@ -236,7 +236,7 @@ def cmd_start(args: list):
                     ╚██████╗███████╗██║
                      ╚═════╝╚══════╝╚═╝
 
-                P O S T M O R T E M C L I v0.2.13-beta
+                P O S T M O R T E M C L I v0.2.14-beta
                        by Filip Andersson, 2026
                   Email Security Analysis Tool for SMHI
     """)
