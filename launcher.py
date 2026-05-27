@@ -92,7 +92,7 @@ def _get_ca_flags() -> list:
     if not os.path.exists(CA_CERT):
         return []
     return [
-        '-v', f'{CA_CERT}:/etc/ssl/certs/org-ca.pem:ro',
+        '-v', f'{CA_CERT}:/etc/ssl/certs/org-ca.pem:ro,z',
         '--env', 'REQUESTS_CA_BUNDLE=/etc/ssl/certs/org-ca.pem',
         '--env', 'SSL_CERT_FILE=/etc/ssl/certs/org-ca.pem',
     ]
