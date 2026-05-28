@@ -7,10 +7,12 @@ import asyncio
 import queue
 import threading
 from email import message_from_bytes
+from datetime import datetime
 from aiosmtpd.controller import Controller
 from src.parser import parse_email
 from src.analyzer import analyze
-from src.reporter import report
+from src.reporter import report, generate_report
+from src.sender import save
 from src.logger import get_logger
 
 logger = get_logger(__name__)
@@ -29,8 +31,9 @@ def _process_queue():
             message = message_from_bytes(raw_bytes)
             parsed  = parse_email(message)
             result  = analyze(parsed, raw_bytes=raw_bytes)
-            report(parsed, result)
-            # TODO: sender.send_report() when implemented
+            report_text = generate_report(parsed, result)
+            print(report_text)
+            save(report_text, f'PMRT-{datetime.now().strftime("%Y%m%d-%H%M%S")}')
         except Exception as e:
             logger.error(f'Error processing email: {e}')
         finally:

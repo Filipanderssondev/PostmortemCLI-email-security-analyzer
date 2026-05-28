@@ -361,12 +361,17 @@ def run_container(args: list):
     env_flag   = ['--env-file', ENV_FILE] if os.path.exists(ENV_FILE) else []
     ca_flags   = _get_ca_flags()
 
+    # Ensure reports directory exists on host
+    reports_dir = os.path.join(CONFIG_DIR, 'reports')
+    os.makedirs(reports_dir, exist_ok=True)
+
     cmd = [
         runtime, 'run', '-it', '--rm',
         *pull_flag,
         *env_flag,
         *ca_flags,
         '-v', f'{get_mount_path()}:/data',
+        '-v', f'{reports_dir}:/data/reports',
         *(['-p', '1025:1025'] if needs_port else []),
         get_image(),
     ] + args

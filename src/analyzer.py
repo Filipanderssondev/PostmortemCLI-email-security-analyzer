@@ -1,21 +1,23 @@
 # src/analyzer.py
 # Analyzes a parsed email dict from parser.py.
 # Checks: headers, SPF/DKIM/DMARC, IP reputation, URLs, attachments.
-# All external calls send only hashes or IP addresses – never raw content.
+# All external calls send only hashes, IP addresses, URLs, or sender email – never raw content.
 # Stateless: no data is stored or retained after analyze() returns.
-# Returns structured result dict with verdict: SÄKERT / OSÄKERT / YTTERLIGARE ANALYS BEHÖVS
+# Returns structured result dict with verdict: MOST LIKELY SAFE / MOST LIKELY UNSAFE / FURTHER ANALYSIS REQUIRED
 #
 # External threat sources:
-#   Spamhaus ZEN      – IP blocklist via DNSBL          (free, fair use)
-#   Spamhaus DBL      – domain blocklist via DNSBL       (free, fair use)
-#   URLhaus           – malicious URL database           (free, fair use)
-#   MalwareBazaar     – malware hash database            (free, fair use)
-#   ThreatFox         – IOC database: IPs, domains, hashes (free, no key)
-#   AbuseIPDB         – IP abuse confidence score        (free tier, API key required)
+#   Spamhaus ZEN        – IP blocklist via DNSBL              (no key required)
+#   Spamhaus DBL        – domain blocklist via DNSBL           (no key required)
+#   URLhaus             – malicious URL database               (ABUSE_CH_API_KEY)
+#   MalwareBazaar       – malware hash database (SHA256)       (ABUSE_CH_API_KEY)
+#   ThreatFox           – IOC database: IPs, domains, hashes  (ABUSE_CH_API_KEY)
+#   AbuseIPDB           – IP abuse confidence score 0-100     (ABUSEIPDB_API_KEY)
+#   VirusTotal          – URL/file/IP — 70+ AV engines        (VIRUSTOTAL_API_KEY)
+#   EmailRep            – sender address reputation            (EMAILREP_API_KEY — pending manual approval)
+#   Google SafeBrowsing – URL phishing/malware check           (GOOGLE_SAFE_BROWSING_KEY)
 #
-# Required env vars:
-#   ABUSEIPDB_API_KEY  – free key from https://www.abuseipdb.com/register
-#                        If unset, AbuseIPDB checks are skipped gracefully.
+# All env vars are optional — sources are skipped gracefully if unset.
+# ABUSE_CH_API_KEY covers URLhaus, MalwareBazaar and ThreatFox (same key from auth.abuse.ch).
 
 import os
 import re
@@ -183,19 +185,26 @@ def _dnsbl(host: str, zone: str) -> bool:
 
 
 def _urlhaus(url: str) -> bool:
+    key = os.environ.get('ABUSE_CH_API_KEY', '')
+    headers = {'Auth-Key': key} if key else {}
     try:
         r = requests.post(
             'https://urlhaus-api.abuse.ch/v1/url/',
             data={'url': url},
+            headers=headers,
             timeout=_TIMEOUT,
         )
-        return r.status_code == 200 and r.json().get('query_status') == 'is_url'
+        if r.status_code != 200:
+            return False
+        data = r.json()
+        status = data.get('query_status', '')
+        return status in ('ok', 'is_url')
     except Exception:
         return False
 
 
 def _malwarebazaar(sha256_hash: str) -> bool:
-    key = os.environ.get('MALWAREBAZAAR_API_KEY', '')
+    key = os.environ.get('ABUSE_CH_API_KEY', '') or os.environ.get('MALWAREBAZAAR_API_KEY', '')
     headers = {'Auth-Key': key} if key else {}
     try:
         r = requests.post(
@@ -212,15 +221,18 @@ def _threatfox(ioc: str) -> bool:
     """
     Checks any IOC (IP, domain, URL, file hash) against ThreatFox.
     ThreatFox tracks malware C2 servers, ransomware infrastructure,
-    and botnet addresses. No API key required.
+    and botnet addresses. Requires ABUSE_CH_API_KEY.
     Returns True if the IOC is a known malicious indicator.
     """
     if not ioc:
         return False
+    key = os.environ.get('ABUSE_CH_API_KEY', '')
+    headers = {'Auth-Key': key} if key else {}
     try:
         r = requests.post(
             'https://threatfox-api.abuse.ch/api/v1/',
             json={'query': 'search_ioc', 'search_term': ioc},
+            headers=headers,
             timeout=_TIMEOUT,
         )
         return r.status_code == 200 and r.json().get('query_status') == 'ok'

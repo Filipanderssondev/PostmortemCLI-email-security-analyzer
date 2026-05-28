@@ -15,7 +15,9 @@ from src.logger import get_logger
 from src.parser import parse_email
 from src.analyzer import analyze
 from src.smtp_reciever import start_listener
-from src.reporter import report
+from src.reporter import report, generate_report
+from datetime import datetime
+from src.sender import save
 
 logger = get_logger(__name__)
 
@@ -177,7 +179,9 @@ def cmd_scan(files: list):
 
         result = analyze(parsed, raw_bytes=raw_bytes)
         print_result(parsed, filepath, result)
-        report(parsed, result)
+        report_text = generate_report(parsed, result)
+        print(report_text)
+        save(report_text, f'PMRT-{datetime.now().strftime("%Y%m%d-%H%M%S")}')
 
 
 def cmd_listen(args: list):
@@ -236,7 +240,7 @@ def cmd_start(args: list):
                     ╚██████╗███████╗██║
                      ╚═════╝╚══════╝╚═╝
 
-                P O S T M O R T E M C L I v0.2.14-beta
+                P O S T M O R T E M C L I v0.2.10-beta
                        by Filip Andersson, 2026
                   Email Security Analysis Tool for SMHI
     """)

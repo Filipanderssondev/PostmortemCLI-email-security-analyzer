@@ -14,7 +14,7 @@ from email.mime.text import MIMEText
 from src.logger import get_logger
 
 logger      = get_logger(__name__)
-_VERSION    = '0.2.14-beta'
+_VERSION    = '0.2.10-beta'
 _REPORT_DIR = '/tmp/postmortem/reports'
 _W          = 64   # line width
 
@@ -272,13 +272,13 @@ def _sources_section():
     for name, kind, purpose, key in [
         ('Spamhaus ZEN',        'DNSBL', 'Sender IP blocklist',              'no key'),
         ('Spamhaus DBL',        'DNSBL', 'URL domain blocklist',             'no key'),
-        ('URLhaus',             'API',   'Malicious URL database',           'no key'),
-        ('MalwareBazaar',       'API',   'Malware hash database (SHA256)',   'auth-key required'),
-        ('ThreatFox',           'API',   'IOC: IPs, domains, hashes',        'no key'),
-        ('AbuseIPDB',           'API',   'IP abuse confidence 0–100',        'optional key'),
-        ('VirusTotal',          'API',   'URL/file/IP — 70+ AV engines',     'required key'),
-        ('EmailRep',            'API',   'Sender email address reputation',  'optional key'),
-        ('Google SafeBrowsing', 'API',   'URL phishing/malware check',       'required key'),
+        ('URLhaus',             'API',   'Malicious URL database',           'ABUSE_CH_API_KEY'),
+        ('MalwareBazaar',       'API',   'Malware hash database (SHA256)',   'ABUSE_CH_API_KEY'),
+        ('ThreatFox',           'API',   'IOC: IPs, domains, hashes',        'ABUSE_CH_API_KEY'),
+        ('AbuseIPDB',           'API',   'IP abuse confidence 0–100',        'ABUSEIPDB_API_KEY'),
+        ('VirusTotal',          'API',   'URL/file/IP — 70+ AV engines',     'VIRUSTOTAL_API_KEY'),
+        ('EmailRep',            'API',   'Sender email address reputation',  'pending approval'),
+        ('Google SafeBrowsing', 'API',   'URL phishing/malware check',       'GOOGLE_SAFE_BROWSING_KEY'),
     ]:
         out.append(f'  {name:<16} [{kind:<4}]  {purpose:<36} {key}')
     out.append('')
