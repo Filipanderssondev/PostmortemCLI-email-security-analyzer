@@ -18,6 +18,8 @@ from src.smtp_reciever import start_listener
 from src.reporter import report, generate_report
 from datetime import datetime
 from src.sender import save
+from importlib.metadata import version as _pkg_version
+_VERSION = _pkg_version('postmortemcli')
 
 logger = get_logger(__name__)
 
@@ -240,7 +242,7 @@ def cmd_start(args: list):
                     ╚██████╗███████╗██║
                      ╚═════╝╚══════╝╚═╝
 
-                P O S T M O R T E M C L I v0.2.10-beta
+                P O S T M O R T E M C L I v{_VERSION}
                        by Filip Andersson, 2026
                   Email Security Analysis Tool for SMHI
     """)
