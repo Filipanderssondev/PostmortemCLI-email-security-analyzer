@@ -14,7 +14,11 @@ from email.mime.text import MIMEText
 from src.logger import get_logger
 
 logger      = get_logger(__name__)
-_VERSION    = '0.2.10-beta'
+try:
+    from importlib.metadata import version as _pkg_version
+    _VERSION = _pkg_version('postmortemcli')
+except Exception:
+    _VERSION = '0.2.16-beta'
 _REPORT_DIR = '/tmp/postmortem/reports'
 _W          = 64   # line width
 

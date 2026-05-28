@@ -371,7 +371,7 @@ def run_container(args: list):
         *env_flag,
         *ca_flags,
         '-v', f'{get_mount_path()}:/data',
-        '-v', f'{reports_dir}:/data/reports',
+        '-v', f'{reports_dir}:/data/reports:z',
         *(['-p', '1025:1025'] if needs_port else []),
         get_image(),
     ] + args
