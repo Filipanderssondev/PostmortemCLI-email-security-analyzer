@@ -25,7 +25,7 @@ try:
     from importlib.metadata import version as _pkg_version
     _VERSION = _pkg_version('postmortemcli')
 except Exception:
-    _VERSION = '0.2.16-beta'
+    _VERSION = '0.2.18-beta'
 
 _VERDICT_SYMBOL = {
     'MOST LIKELY SAFE':                    '✓',
