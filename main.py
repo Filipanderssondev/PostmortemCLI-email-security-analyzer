@@ -244,12 +244,10 @@ def cmd_start(args: list):
                     ██║     ██║     ██║
                     ██║     ██║     ██║
                     ╚██████╗███████╗██║
-                     ╚═════╝╚══════╝╚═╝
-
-                P O S T M O R T E M C L I v{_VERSION}
-                       by Filip Andersson, 2026
-                  Email Security Analysis Tool for SMHI
-    """)
+                     ╚═════╝╚══════╝╚═╝""")
+    print(f"          P O S T M O R T E M C L I v{_VERSION}")
+    print("""              by Filip Andersson, 2026
+                  Email Security Analysis Tool for SMHI""")
     print(f'[*] SMTP endpoint: localhost:1025')
     print(f'[*] Submit emails using: postmortemcli send <file.eml>\n')
     print("  Type 'help' for available commands. Type 'exit' to quit.\n")
