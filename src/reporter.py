@@ -18,7 +18,7 @@ try:
     from importlib.metadata import version as _pkg_version
     _VERSION = _pkg_version('postmortemcli')
 except Exception:
-    _VERSION = '0.2.18-beta'
+    _VERSION = '0.2.19-beta'
 _REPORT_DIR = '/tmp/postmortem/reports'
 _W          = 64   # line width
 
