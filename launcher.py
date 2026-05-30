@@ -9,9 +9,9 @@ import glob
 import shutil
 import subprocess
 
-CONFIG_DIR = os.path.expanduser('~/.postmortemcli')
-ENV_FILE   = os.path.join(CONFIG_DIR, '.env')
-CA_CERT    = os.path.join(CONFIG_DIR, 'org-ca.pem')
+CONFIG_DIR = os.path.normpath(os.path.expanduser('~/.postmortemcli'))
+ENV_FILE   = os.path.normpath(os.path.join(CONFIG_DIR, '.env'))
+CA_CERT    = os.path.normpath(os.path.join(CONFIG_DIR, 'org-ca.pem'))
 
 # ── Environment detection ─────────────────────────────────────────────────────
 
@@ -182,25 +182,34 @@ def cmd_setup():
     print('    PostmortemCLI — Setup')
     print('  ════════════════════════════════════════════════')
 
+    print()
+    print(f'  Platform:    {sys.platform}')
+    print(f'  Config dir:  {CONFIG_DIR}')
+
+    # Create config and reports directories
     os.makedirs(CONFIG_DIR, exist_ok=True)
-    os.makedirs(os.path.join(CONFIG_DIR, 'reports'), exist_ok=True)
+    print(f'  ✓ Created {CONFIG_DIR}')
+    reports_dir = os.path.join(CONFIG_DIR, 'reports')
+    os.makedirs(reports_dir, exist_ok=True)
+    print(f'  ✓ Created {reports_dir}')
 
     # Windows: add Python Scripts to user PATH permanently
     if sys.platform == 'win32':
         scripts_dir = os.path.join(os.path.dirname(sys.executable), 'Scripts')
+        print(f'  Adding {scripts_dir} to user PATH...')
         try:
             subprocess.run([
                 'powershell', '-Command',
                 f'[Environment]::SetEnvironmentVariable("PATH", '
                 f'[Environment]::GetEnvironmentVariable("PATH","User") + ";{scripts_dir}", "User")'
             ], capture_output=True)
-            print(f'  ✓ Added Python Scripts to user PATH.')
-            print('  Open a new terminal for the change to take effect.')
+            print(f'  ✓ PATH updated — open a new terminal for the change to take effect.')
         except Exception:
             print(f'  ⚠  Could not set PATH automatically.')
             print(f'  Add manually to PATH: {scripts_dir}')
 
     enterprise = is_enterprise_environment()
+    print(f'  Enterprise:  {enterprise}')
 
     if enterprise:
         print()
