@@ -13,8 +13,10 @@ import os
 from src.logger import get_logger
 
 logger   = get_logger(__name__)
-_OUT_DIR = '/data/reports' if os.environ.get('POSTMORTEM_CONTAINER') == '1' \
-           else os.path.expanduser('~/.postmortemcli/reports')
+# Inside container: /data/reports (mounted from ~/.postmortemcli/reports)
+# Outside container or local testing: ~/.postmortemcli/reports directly
+_OUT_DIR = '/data/reports' if os.environ.get('POSTMORTEM_CONTAINER') == '1'            else os.path.expanduser('~/.postmortemcli/reports')
+
 
 def save(report_text: str, report_id: str) -> str:
     """

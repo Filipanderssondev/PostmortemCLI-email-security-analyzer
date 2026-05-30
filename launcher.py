@@ -50,7 +50,7 @@ def is_private_registry() -> bool:
 
 def is_enterprise_environment() -> bool:
     """
-    Detects Enterprise environment.
+    Detects enterprise environment.
     Signal: RHEL operating system + private registry configured.
     RHEL is common in enterprise environments. Private registry means POSTMORTEM_IMAGE
     points to an internal private registry, not Docker Hub.
@@ -88,11 +88,15 @@ def _get_ca_flags() -> list:
     This fixes SSL verification failures caused by enterprise SSL inspection
     proxies that intercept HTTPS traffic and re-sign certificates with an
     internal CA the container does not trust.
+
+    The :z flag sets the correct SELinux label on Linux/RHEL.
+    It is omitted on Windows where SELinux does not apply.
     """
     if not os.path.exists(CA_CERT):
         return []
+    z = '' if sys.platform == 'win32' else ',z'
     return [
-        '-v', f'{CA_CERT}:/etc/ssl/certs/org-ca.pem:ro,z',
+        '-v', f'{CA_CERT}:/etc/ssl/certs/org-ca.pem:ro{z}',
         '--env', 'REQUESTS_CA_BUNDLE=/etc/ssl/certs/org-ca.pem',
         '--env', 'SSL_CERT_FILE=/etc/ssl/certs/org-ca.pem',
     ]
@@ -119,7 +123,7 @@ def _find_system_ca_certs() -> list:
 
 
 def _copy_ca_cert(cert_path: str):
-    """Copy a CA certificate to ~/.postmortemcli/org-ca.pem."""
+    """Copy a CA certificate to the local config directory."""
     shutil.copy2(cert_path, CA_CERT)
 
 
@@ -154,7 +158,8 @@ def _write_env_file(keys: dict):
         for k, v in merged.items():
             f.write(f'{k}={v}\n')
 
-    os.chmod(ENV_FILE, 0o600)
+    if sys.platform != 'win32':
+        os.chmod(ENV_FILE, 0o600)
 
 
 def _prompt_key(name: str, description: str, url: str, existing: str) -> str:
@@ -178,6 +183,22 @@ def cmd_setup():
     print('  ════════════════════════════════════════════════')
 
     os.makedirs(CONFIG_DIR, exist_ok=True)
+    os.makedirs(os.path.join(CONFIG_DIR, 'reports'), exist_ok=True)
+
+    # Windows: add Python Scripts to user PATH permanently
+    if sys.platform == 'win32':
+        scripts_dir = os.path.join(os.path.dirname(sys.executable), 'Scripts')
+        try:
+            subprocess.run([
+                'powershell', '-Command',
+                f'[Environment]::SetEnvironmentVariable("PATH", '
+                f'[Environment]::GetEnvironmentVariable("PATH","User") + ";{scripts_dir}", "User")'
+            ], capture_output=True)
+            print(f'  ✓ Added Python Scripts to user PATH.')
+            print('  Open a new terminal for the change to take effect.')
+        except Exception:
+            print(f'  ⚠  Could not set PATH automatically.')
+            print(f'  Add manually to PATH: {scripts_dir}')
 
     enterprise = is_enterprise_environment()
 
@@ -201,6 +222,12 @@ def cmd_setup():
                     existing[k.strip()] = v.strip()
 
     keys = {
+        'ABUSE_CH_API_KEY': _prompt_key(
+            'ABUSE_CH_API_KEY',
+            'URLhaus, MalwareBazaar and ThreatFox (one key for all three)',
+            'https://auth.abuse.ch',
+            existing.get('ABUSE_CH_API_KEY', ''),
+        ),
         'VIRUSTOTAL_API_KEY': _prompt_key(
             'VIRUSTOTAL_API_KEY',
             '70+ AV engines — URL and file scanning',
@@ -218,12 +245,6 @@ def cmd_setup():
             'Google phishing and malware URL detection',
             'https://console.cloud.google.com',
             existing.get('GOOGLE_SAFE_BROWSING_KEY', ''),
-        ),
-        'MALWAREBAZAAR_API_KEY': _prompt_key(
-            'MALWAREBAZAAR_API_KEY',
-            'Malware hash database',
-            'https://auth.abuse.ch',
-            existing.get('MALWAREBAZAAR_API_KEY', ''),
         ),
         'EMAILREP_API_KEY': _prompt_key(
             'EMAILREP_API_KEY',
@@ -244,17 +265,15 @@ def cmd_setup():
     _write_env_file(keys)
     print(f'\n  ✓ Config saved to {ENV_FILE}')
 
-    # ── CA certificate (enterprise only) ────────────────────────────────────────────
+    # ── CA certificate (enterprise only) ──────────────────────────────────────
 
     if enterprise:
         print()
         print('  ── SSL Certificate ──────────────────────────────')
         print('  Searching for organisation CA certificate...')
 
-        # Skip if already configured — never ask twice
         if os.path.exists(CA_CERT):
-            print(f'  ✓ Certificate already configured — skipping.')
-
+            print('  ✓ Certificate already configured — skipping.')
         else:
             certs = _find_system_ca_certs()
 
@@ -272,11 +291,10 @@ def cmd_setup():
                 try:
                     chosen = certs[int(choice) - 1]
                     _copy_ca_cert(chosen)
-                    print(f'  ✓ Certificate copied — this will not be asked again.')
+                    print('  ✓ Certificate copied — this will not be asked again.')
                 except (ValueError, IndexError):
                     print('  ⚠  Invalid choice — skipping.')
                     print(f'  Re-run setup or copy manually to {CA_CERT}')
-
             else:
                 print('  ⚠  No certificates found in system CA store.')
                 print(f'  Copy the organisation root CA to {CA_CERT}')
@@ -288,9 +306,7 @@ def cmd_setup():
             if 'postmortemcli-update' not in content:
                 with open(bashrc, 'a') as f:
                     f.write('\n# PostmortemCLI\n')
-                    f.write(
-                        "alias postmortemcli-update='~/.postmortemcli/setup.sh'\n"
-                    )
+                    f.write("alias postmortemcli-update='~/.postmortemcli/setup.sh'\n")
                 print('  ✓ postmortemcli-update alias added to ~/.bashrc')
                 print('  Run: source ~/.bashrc')
         except Exception:
@@ -365,13 +381,16 @@ def run_container(args: list):
     reports_dir = os.path.join(CONFIG_DIR, 'reports')
     os.makedirs(reports_dir, exist_ok=True)
 
+    # :z sets SELinux label on Linux/RHEL — omitted on Windows
+    z = '' if sys.platform == 'win32' else ':z'
+
     cmd = [
         runtime, 'run', '-it', '--rm',
         *pull_flag,
         *env_flag,
         *ca_flags,
         '-v', f'{get_mount_path()}:/data',
-        '-v', f'{reports_dir}:/data/reports:z',
+        '-v', f'{reports_dir}:/data/reports{z}',
         *(['-p', '1025:1025'] if needs_port else []),
         get_image(),
     ] + args

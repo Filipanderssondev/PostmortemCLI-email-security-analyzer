@@ -7,7 +7,7 @@ name            = "postmortemcli"
 version         = "0.2.19-beta"
 description     = "Email security analysis tool – containerized CLI for structured threat detection"
 requires-python = ">=3.10"
-dependencies    = []
+dependencies    = ["aiosmtpd", "dnspython", "extract-msg", "requests", "dkimpy"]
 
 [tool.setuptools]
 py-modules = ["launcher", "main"]
