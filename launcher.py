@@ -450,7 +450,7 @@ def cmd_update(args: list):
 
     Enterprise (SMHI Linux):
       Delegates to ~/.postmortemcli/setup.sh which handles
-      Trivy scan, buildah pull, Harbor push, podman pull.
+      Image scanning, retagging, registry push and local pull.
 
     Standard (Windows / private Linux / Mac):
       1. pip install --force-reinstall from GitHub
@@ -471,12 +471,15 @@ def cmd_update(args: list):
 
     # ── Enterprise (SMHI) — delegate to local setup.sh ───────────────────────
     if is_enterprise_environment():
-        setup_script = os.path.join(CONFIG_DIR, 'setup.sh')
+        setup_script = os.path.join(CONFIG_DIR, 'update.sh')
         if not os.path.exists(setup_script):
             print('  [!] Enterprise update script not found: ' + setup_script)
-            print('      Expected: ~/.postmortemcli/setup.sh')
+            print('      Expected: ~/.postmortemcli/update.sh')
             return
         print('  Enterprise environment detected.')
+        # Ensure script is executable
+        import stat
+        os.chmod(setup_script, os.stat(setup_script).st_mode | stat.S_IEXEC)
         print('  Running ' + setup_script + ' ' + tag + '...')
         print()
         result = subprocess.run([setup_script, tag])
