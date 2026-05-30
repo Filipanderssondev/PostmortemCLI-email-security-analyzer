@@ -10,12 +10,21 @@
 # Host:   ~/.postmortemcli/reports/PMRT-YYYYMMDD-HHMMSS.txt
 
 import os
+import sys
 from src.logger import get_logger
 
 logger   = get_logger(__name__)
-# Inside container: /data/reports (mounted from ~/.postmortemcli/reports)
-# Outside container or local testing: ~/.postmortemcli/reports directly
-_OUT_DIR = '/data/reports' if os.environ.get('POSTMORTEM_CONTAINER') == '1'            else os.path.expanduser('~/.postmortemcli/reports')
+# Inside container: /data/reports (mounted from the host config dir)
+# Outside container (local testing): platform-specific config dir
+def _get_reports_dir() -> str:
+    if os.environ.get('POSTMORTEM_CONTAINER') == '1':
+        return '/data/reports'
+    if sys.platform == 'win32':
+        base = os.environ.get('APPDATA', os.path.expanduser('~'))
+        return os.path.normpath(os.path.join(base, 'postmortemcli', 'reports'))
+    return os.path.expanduser('~/.postmortemcli/reports')
+
+_OUT_DIR = _get_reports_dir()
 
 
 def save(report_text: str, report_id: str) -> str:
@@ -29,7 +38,7 @@ def save(report_text: str, report_id: str) -> str:
         with open(path, 'w', encoding='utf-8') as f:
             f.write(report_text)
         logger.info(f'Report saved → {path}')
-        print(f'\n  Report saved → ~/.postmortemcli/reports/{report_id}.txt\n')
+        print(f'\n  Report saved -> {path}\n')
         return path
     except Exception as e:
         logger.warning(f'Could not save report: {e}')

@@ -9,7 +9,15 @@ import glob
 import shutil
 import subprocess
 
-CONFIG_DIR = os.path.normpath(os.path.expanduser('~/.postmortemcli'))
+# Use APPDATA on Windows (avoids permission issues with dot-prefixed folders)
+# On Linux/Mac: ~/.postmortemcli
+# On Windows:   C:\Users\<user>\AppData\Roaming\postmortemcli
+if sys.platform == 'win32':
+    CONFIG_DIR = os.path.normpath(
+        os.path.join(os.environ.get('APPDATA', os.path.expanduser('~')), 'postmortemcli')
+    )
+else:
+    CONFIG_DIR = os.path.normpath(os.path.expanduser('~/.postmortemcli'))
 ENV_FILE   = os.path.normpath(os.path.join(CONFIG_DIR, '.env'))
 CA_CERT    = os.path.normpath(os.path.join(CONFIG_DIR, 'org-ca.pem'))
 
