@@ -18,10 +18,6 @@ ENV POSTMORTEM_CONTAINER=1
 
 RUN pip install -e .
 
-RUN apt-get remove -y --purge perl-base && \
-    apt-get autoremove -y && \
-    rm -rf /var/lib/apt/lists/*
-
 RUN mkdir -p /data /data/reports
 
 ENTRYPOINT ["postmortemcli"]
