@@ -459,7 +459,7 @@ def cmd_update(args: list):
     if not args:
         print('[ERROR] Provide a version.')
         print('Usage: postmortemcli update <version>')
-        print('Example: postmortemcli update v0.3.3-beta')
+        print('Example: postmortemcli update v0.3.0-beta')
         return
 
     version = args[0].lstrip('v')
@@ -582,16 +582,19 @@ def run_container(args: list):
     reports_dir = os.path.join(CONFIG_DIR, 'reports')
     os.makedirs(reports_dir, exist_ok=True)
 
-    # :z sets SELinux label on Linux/RHEL — omitted on Windows
+    # Mount CONFIG_DIR as /data so reports, config etc are accessible
+    # On Linux/RHEL: :z sets SELinux label — omitted on Windows
     z = '' if sys.platform == 'win32' else ':z'
 
+    # Mount CONFIG_DIR as /data (reports, env etc)
+    # Mount cwd as /cwd so scan/send can access local email files
     cmd = [
         runtime, 'run', '-it', '--rm',
         *pull_flag,
         *env_flag,
         *ca_flags,
-        '-v', f'{get_mount_path()}:/data',
-        '-v', f'{reports_dir}:/data/reports{z}',
+        '-v', f'{CONFIG_DIR}:/data{z}',
+        '-v', f'{get_mount_path()}:/cwd{z}',
         *(['-p', '1025:1025'] if needs_port else []),
         get_image(),
     ] + args
