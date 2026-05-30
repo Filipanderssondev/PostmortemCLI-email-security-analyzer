@@ -201,15 +201,20 @@ def cmd_setup():
     os.makedirs(reports_dir, exist_ok=True)
     print(f'  ✓ Created {reports_dir}')
 
-    # Windows: add Python Scripts to user PATH permanently
+    # Windows: add user Scripts directory to PATH permanently
+    # Uses site.getuserbase() to find the correct user-level Scripts dir
+    # where pip installs executables when running without admin rights
     if sys.platform == 'win32':
-        scripts_dir = os.path.join(os.path.dirname(sys.executable), 'Scripts')
+        import site
+        scripts_dir = os.path.join(site.getuserbase(), 'Scripts')
         print(f'  Adding {scripts_dir} to user PATH...')
         try:
-            subprocess.run([
+            result = subprocess.run([
                 'powershell', '-Command',
-                f'[Environment]::SetEnvironmentVariable("PATH", '
-                f'[Environment]::GetEnvironmentVariable("PATH","User") + ";{scripts_dir}", "User")'
+                f'$current = [Environment]::GetEnvironmentVariable("PATH","User"); '
+                f'if ($current -notlike "*{scripts_dir}*") {{ '
+                f'[Environment]::SetEnvironmentVariable("PATH", $current + ";{scripts_dir}", "User") '
+                f'}}'
             ], capture_output=True)
             print(f'  ✓ PATH updated — open a new terminal for the change to take effect.')
         except Exception:
@@ -340,6 +345,180 @@ def cmd_setup():
     print()
 
 
+
+# ── Docker management ─────────────────────────────────────────────────────────
+
+def _ensure_docker_running(runtime: str) -> bool:
+    try:
+        result = subprocess.run([runtime, 'info'], capture_output=True, timeout=5)
+        if result.returncode == 0:
+            return True
+    except Exception:
+        pass
+
+    if sys.platform == 'win32' and runtime == 'docker':
+        print('  [*] Docker not running -- starting Docker Desktop...')
+        docker_paths = [
+            os.path.join(os.environ.get('PROGRAMFILES', 'C:/Program Files'), 'Docker', 'Docker', 'Docker Desktop.exe'),
+        ]
+        started = False
+        for path in docker_paths:
+            if os.path.exists(path):
+                subprocess.Popen([path])
+                started = True
+                break
+
+        if not started:
+            print('  [!] Docker Desktop not found.')
+            print('      Install from: https://www.docker.com/products/docker-desktop')
+            return False
+
+        import time
+        print('  [*] Waiting for Docker to start', end='', flush=True)
+        for _ in range(30):
+            time.sleep(2)
+            print('.', end='', flush=True)
+            try:
+                result = subprocess.run([runtime, 'info'], capture_output=True, timeout=5)
+                if result.returncode == 0:
+                    print(' ready.')
+                    return True
+            except Exception:
+                pass
+        print()
+        print('  [!] Docker did not start in time. Start Docker Desktop manually.')
+        return False
+
+    return False
+
+
+def _update_image(runtime: str, version: str):
+    image_name = 'filipanderssondev/postmortemcli'
+    tag = version if version.startswith('v') else 'v' + version
+    full_image = 'docker.io/' + image_name + ':' + tag
+
+    print('  [1/3] Stopping running postmortemcli containers...')
+    try:
+        result = subprocess.run(
+            [runtime, 'ps', '-q', '--filter', 'ancestor=' + image_name],
+            capture_output=True, text=True
+        )
+        for cid in [c for c in result.stdout.strip().split() if c]:
+            subprocess.run([runtime, 'stop', cid], capture_output=True)
+            print('         Stopped ' + cid[:12])
+    except Exception:
+        pass
+
+    print('  [2/3] Removing existing postmortemcli images...')
+    try:
+        result = subprocess.run(
+            [runtime, 'images', '--format', '{{.ID}}', '--filter', 'reference=' + image_name + '*'],
+            capture_output=True, text=True
+        )
+        for img_id in [i for i in result.stdout.strip().split() if i]:
+            subprocess.run([runtime, 'rmi', '-f', img_id], capture_output=True)
+            print('         Removed ' + img_id[:12])
+    except Exception:
+        pass
+
+    print('  [3/3] Pulling ' + full_image + '...')
+    result = subprocess.run([runtime, 'pull', full_image])
+    if result.returncode == 0:
+        print('  ✓ Image updated to ' + tag)
+        try:
+            env_content = open(ENV_FILE).read() if os.path.exists(ENV_FILE) else ''
+            if 'POSTMORTEM_IMAGE=' in env_content:
+                lines = [
+                    'POSTMORTEM_IMAGE=' + full_image if l.startswith('POSTMORTEM_IMAGE=') else l
+                    for l in env_content.splitlines()
+                ]
+                with open(ENV_FILE, 'w') as f:
+                    f.write(os.linesep.join(lines))
+            else:
+                with open(ENV_FILE, 'a') as f:
+                    f.write(os.linesep + 'POSTMORTEM_IMAGE=' + full_image + os.linesep)
+            print('  ✓ POSTMORTEM_IMAGE updated in .env')
+        except Exception as e:
+            print('  Warning: could not update .env: ' + str(e))
+    else:
+        print('  [!] Failed to pull image. Check your internet connection.')
+
+
+def cmd_update(args: list):
+    """
+    Updates PostmortemCLI to a specific version.
+
+    Enterprise (SMHI Linux):
+      Delegates to ~/.postmortemcli/setup.sh which handles
+      Trivy scan, buildah pull, Harbor push, podman pull.
+
+    Standard (Windows / private Linux / Mac):
+      1. pip install --force-reinstall from GitHub
+      2. docker/podman pull from DockerHub
+    """
+    if not args:
+        print('[ERROR] Provide a version.')
+        print('Usage: postmortemcli update <version>')
+        print('Example: postmortemcli update v0.3.0-beta')
+        return
+
+    version = args[0].lstrip('v')
+    tag = 'v' + version
+
+    print()
+    print('  PostmortemCLI -- Update to ' + tag)
+    print()
+
+    # ── Enterprise (SMHI) — delegate to local setup.sh ───────────────────────
+    if is_enterprise_environment():
+        setup_script = os.path.join(CONFIG_DIR, 'setup.sh')
+        if not os.path.exists(setup_script):
+            print('  [!] Enterprise update script not found: ' + setup_script)
+            print('      Expected: ~/.postmortemcli/setup.sh')
+            return
+        print('  Enterprise environment detected.')
+        print('  Running ' + setup_script + ' ' + tag + '...')
+        print()
+        result = subprocess.run([setup_script, tag])
+        if result.returncode == 0:
+            print()
+            print('  ✓ Enterprise update complete. Run: postmortemcli start')
+        else:
+            print('  [!] Enterprise update script failed.')
+        print()
+        return
+
+    # ── Standard (Windows / private Linux / Mac) ─────────────────────────────
+
+    # Step 1: Update Python package
+    print('  [1/2] Updating Python package...')
+    repo = 'https://github.com/Filipanderssondev/PostmortemCLI-email-security-analyzer.git'
+    result = subprocess.run([
+        sys.executable, '-m', 'pip', 'install', '--force-reinstall',
+        'git+' + repo + '@' + tag
+    ])
+    if result.returncode != 0:
+        print('  [!] pip install failed.')
+        return
+    print('  ✓ Package updated.')
+
+    # Step 2: Update container image
+    print()
+    print('  [2/2] Updating container image...')
+    runtime = find_runtime()
+    if not runtime:
+        print('  [!] No container runtime found (docker/podman).')
+        return
+
+    if not _ensure_docker_running(runtime):
+        return
+
+    _update_image(runtime, tag)
+
+    print()
+    print('  ✓ Update complete. Run: postmortemcli start')
+    print()
+
 # ── Container lifecycle ───────────────────────────────────────────────────────
 
 def _kill_existing(runtime: str):
@@ -387,6 +566,8 @@ def run_container(args: list):
         sys.exit(1)
 
     if args and args[0] in ('start', 'listen'):
+        if not _ensure_docker_running(runtime):
+            sys.exit(1)
         _kill_existing(runtime)
 
     pull_flag  = ['--pull', 'never'] if is_private_registry() else []
@@ -448,6 +629,7 @@ PostmortemCLI – Email Security Analysis Tool
 
 Usage:
   postmortemcli setup                    First-time setup (run once per machine)
+  postmortemcli update <version>         Update to a specific version
   postmortemcli start                    Start container + SMTP listener
   postmortemcli scan <file> [files...]   Scan email files directly
   postmortemcli send <file> [files...]   Send files to running SMTP listener
@@ -470,6 +652,8 @@ def main():
 
     if command == 'setup':
         cmd_setup()
+    elif command == 'update':
+        cmd_update(args[1:])
     elif command == 'send':
         send_files(args[1:])
     elif command in ('start', 'scan', 'listen'):
