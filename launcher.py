@@ -459,7 +459,7 @@ def cmd_update(args: list):
     if not args:
         print('[ERROR] Provide a version.')
         print('Usage: postmortemcli update <version>')
-        print('Example: postmortemcli update v0.3.2-beta')
+        print('Example: postmortemcli update v0.3.3-beta')
         return
 
     version = args[0].lstrip('v')
