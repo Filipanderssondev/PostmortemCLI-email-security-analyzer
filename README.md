@@ -327,7 +327,7 @@ pytest --cov=src
 ## Releasing a New Version
 
 ```bash
-python release.py 0.3.5-beta
+python release.py 0.3.6-beta
 ```
 
 This automatically:
