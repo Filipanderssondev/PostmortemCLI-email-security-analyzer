@@ -576,6 +576,9 @@ def run_container(args: list):
     pull_flag  = ['--pull', 'never'] if is_private_registry() else []
     needs_port = args[0] in ('start', 'listen') if args else False
     env_flag   = ['--env-file', ENV_FILE] if os.path.exists(ENV_FILE) else []
+    # Pass host reports path so sender.py can display correct path in output
+    host_reports = os.path.join(CONFIG_DIR, 'reports')
+    env_flag += ['--env', f'HOST_REPORTS_DIR={host_reports}']
     ca_flags   = _get_ca_flags()
 
     # Ensure reports directory exists on host

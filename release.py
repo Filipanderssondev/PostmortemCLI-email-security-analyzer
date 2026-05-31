@@ -142,7 +142,7 @@ def main():
     git_commit_and_tag(new_version, updated)
 
     print(f'\n  Done. v{new_version} is live.')
-    print(f'  Run: postmortemcli-update v{new_version}\n')
+    print(f'  Run: postmortemcli update v{new_version}\n')
 
 
 if __name__ == '__main__':

@@ -38,7 +38,9 @@ def save(report_text: str, report_id: str) -> str:
         with open(path, 'w', encoding='utf-8') as f:
             f.write(report_text)
         logger.info(f'Report saved → {path}')
-        print(f'\n  Report saved -> {path}\n')
+        host_reports = os.environ.get('HOST_REPORTS_DIR', '/data/reports')
+        host_path = os.path.join(host_reports, f'{report_id}.txt')
+        print(f'\n  Report saved -> {host_path}\n')
         return path
     except Exception as e:
         logger.warning(f'Could not save report: {e}')
