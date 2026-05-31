@@ -15,11 +15,11 @@ import subprocess
 if sys.platform == 'win32':
     CONFIG_DIR = os.path.normpath(
         os.path.join(os.environ.get('APPDATA', os.path.expanduser('~')), 'postmortemcli')
-    )
+    ).strip()
 else:
-    CONFIG_DIR = os.path.normpath(os.path.expanduser('~/.postmortemcli'))
-ENV_FILE   = os.path.normpath(os.path.join(CONFIG_DIR, '.env'))
-CA_CERT    = os.path.normpath(os.path.join(CONFIG_DIR, 'org-ca.pem'))
+    CONFIG_DIR = os.path.normpath(os.path.expanduser('~/.postmortemcli')).strip()
+ENV_FILE   = os.path.normpath(os.path.join(CONFIG_DIR, '.env')).strip()
+CA_CERT    = os.path.normpath(os.path.join(CONFIG_DIR, 'org-ca.pem')).strip()
 
 # ── Environment detection ─────────────────────────────────────────────────────
 
