@@ -588,13 +588,24 @@ def run_container(args: list):
 
     # Mount CONFIG_DIR as /data (reports, env etc)
     # Mount cwd as /cwd so scan/send can access local email files
+    # Convert Windows path to Docker-compatible Unix format
+    # Uses same logic as get_mount_path(): C:\Users\... -> /c/Users/...
+    def _to_docker_path(p: str) -> str:
+        if sys.platform != 'win32':
+            return p
+        drive, rest = os.path.splitdrive(p)
+        return f'/{drive.replace(":", "").lower()}{rest.replace(chr(92), "/")}'
+
+    config_mount = _to_docker_path(CONFIG_DIR)
+    cwd_mount    = get_mount_path()
+
     cmd = [
         runtime, 'run', '-it', '--rm',
         *pull_flag,
         *env_flag,
         *ca_flags,
-        '-v', f'{CONFIG_DIR}:/data{z}',
-        '-v', f'{get_mount_path()}:/cwd{z}',
+        '-v', f'{config_mount}:/data{z}',
+        '-v', f'{cwd_mount}:/cwd{z}',
         *(['-p', '1025:1025'] if needs_port else []),
         get_image(),
     ] + args
