@@ -631,9 +631,36 @@ def send_files(files: list):
     for filepath in files:
         try:
             with open(filepath, 'rb') as f:
-                message = message_from_bytes(f.read())
+                raw = f.read()
+
+            # Handle .msg files via extract-msg
+            ext = os.path.splitext(filepath)[1].lower()
+            if ext == '.msg':
+                try:
+                    import extract_msg
+                    msg = extract_msg.openMsg(filepath)
+                    raw = msg.exportBytes()
+                except ImportError:
+                    print('[ERROR] .msg support requires: pip install extract-msg')
+                    continue
+                except Exception as e:
+                    print(f'[ERROR] Could not read .msg file: {e}')
+                    continue
+
+            message = message_from_bytes(raw)
+
+            # Add fallback To address if missing — required by SMTP
+            if not message.get('To'):
+                message['To'] = 'postmortem@localhost'
+
             with smtplib.SMTP('127.0.0.1', 1025) as smtp:
-                smtp.send_message(message)
+                smtp.sendmail(
+                    message.get('From', 'postmortem@localhost'),
+                    ['postmortem@localhost'],
+                    raw
+                )
+            print(f'[*] Sent: {os.path.basename(filepath)}')
+
         except FileNotFoundError:
             print(f'[ERROR] File not found: {filepath}')
         except ConnectionRefusedError:
