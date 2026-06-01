@@ -433,11 +433,11 @@ def _update_image(runtime: str, version: str):
                     'POSTMORTEM_IMAGE=' + full_image if l.startswith('POSTMORTEM_IMAGE=') else l
                     for l in env_content.splitlines()
                 ]
-                with open(ENV_FILE, 'w', encoding='utf-8') as f:
-                    f.write(os.linesep.join(lines))
+                with open(ENV_FILE, 'w', encoding='utf-8', newline='\n') as f:
+                    f.write('\n'.join(lines))
             else:
-                with open(ENV_FILE, 'a') as f:
-                    f.write(os.linesep + 'POSTMORTEM_IMAGE=' + full_image + os.linesep)
+                with open(ENV_FILE, 'a', encoding='utf-8', newline='\n') as f:
+                    f.write('\n' + 'POSTMORTEM_IMAGE=' + full_image + '\n')
             print('  ✓ POSTMORTEM_IMAGE updated in .env')
         except Exception as e:
             print('  Warning: could not update .env: ' + str(e))

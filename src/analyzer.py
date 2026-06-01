@@ -92,14 +92,27 @@ def _extract_domain(field: str) -> str:
     _, addr = parseaddr(field)
     if '@' in addr:
         return addr.split('@')[-1].lower().strip()
+    # Fallback when parseaddr is defeated by malformed From headers:
+    # grab the domain directly from the first @domain pattern.
+    m = re.search(r'@([A-Za-z0-9.-]+\.[A-Za-z]{2,})', field)
+    if m:
+        return m.group(1).lower().strip().rstrip('>')
     return ''
 
 
 def _extract_sender_ip(received_list: list) -> str:
     if not received_list:
         return ''
-    match = re.search(r'\[(\d{1,3}(?:\.\d{1,3}){3})\]', received_list[-1])
-    return match.group(1) if match else ''
+    # Search all hops, oldest first (last in list = closest to sender).
+    # Match IPv4 regardless of [brackets], (parens) or bare form.
+    # Skip private/internal IPs — we want the public originating address.
+    ip_re = re.compile(r'(?<![\d.])(\d{1,3}(?:\.\d{1,3}){3})(?![\d.])')
+    for hop in reversed(received_list):
+        for m in ip_re.finditer(hop):
+            ip = m.group(1)
+            if not _PRIVATE_IP.match(ip):
+                return ip
+    return ''
 
 
 def _sha256(data: bytes) -> str:
