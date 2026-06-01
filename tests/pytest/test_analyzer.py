@@ -68,8 +68,19 @@ class TestExtractSenderIp:
         assert _extract_sender_ip(['from mx.example.com by other.com']) == ''
 
     def test_valid_ip_formats(self):
+        # Public IP in brackets — should be extracted
+        received = ['from x ([89.144.44.2]) by y']
+        assert _extract_sender_ip(received) == '89.144.44.2'
+
+    def test_skips_private_ip(self):
+        # Private/internal IPs must be skipped — we want the public sender
         received = ['from x ([192.168.1.255]) by y']
-        assert _extract_sender_ip(received) == '192.168.1.255'
+        assert _extract_sender_ip(received) == ''
+
+    def test_matches_parenthesized_ip(self):
+        # Real-world Received headers often use (parens), not [brackets]
+        received = ['from mail.evil.com (89.144.44.2) by mx.example.com']
+        assert _extract_sender_ip(received) == '89.144.44.2'
 
 
 # ── _sha256 ───────────────────────────────────────────────────────────────────
