@@ -9,6 +9,7 @@ import glob
 import shutil
 import subprocess
 
+
 # Use APPDATA on Windows (avoids permission issues with dot-prefixed folders)
 # On Linux/Mac: ~/.postmortemcli
 # On Windows:   C:\Users\<user>\AppData\Roaming\postmortemcli
@@ -622,6 +623,7 @@ def run_container(args: list):
 def send_files(files: list):
     import smtplib
     from email import message_from_bytes
+    from email.policy import SMTP as _smtp_policy
     from email.utils import parseaddr
 
     if not files:
@@ -649,7 +651,7 @@ def send_files(files: list):
                 with open(filepath, 'rb') as f:
                     raw = f.read()
 
-            message = message_from_bytes(raw)
+            message = message_from_bytes(raw, policy=_smtp_policy)
 
             _, from_addr = parseaddr(message.get('From', ''))
             if not from_addr or '@' not in from_addr:
