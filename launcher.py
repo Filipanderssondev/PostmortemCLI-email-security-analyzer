@@ -623,8 +623,18 @@ def run_container(args: list):
 def send_files(files: list):
     import smtplib
     from email import message_from_bytes
-    from email.policy import SMTP as _smtp_policy
     from email.utils import parseaddr
+
+    def _wrap_long_lines(data: bytes, limit: int = 990) -> bytes:
+        # RFC 5321 4.5.3.1.6: max 998 octets/line. Hard-wrap anything longer.
+        # Base64 tolerates inserted newlines; analysis (headers/URLs) is unaffected.
+        out = []
+        for line in data.replace(b'\r\n', b'\n').split(b'\n'):
+            while len(line) > limit:
+                out.append(line[:limit])
+                line = line[limit:]
+            out.append(line)
+        return b'\r\n'.join(out)
 
     if not files:
         print('[ERROR] Provide at least one file.')
@@ -645,27 +655,22 @@ def send_files(files: list):
                 except ImportError:
                     print('[ERROR] .msg support requires: pip install extract-msg')
                     continue
-                msg_obj = extract_msg.openMsg(filepath)
-                raw     = msg_obj.exportBytes()
+                raw = extract_msg.openMsg(filepath).exportBytes()
             else:
                 with open(filepath, 'rb') as f:
                     raw = f.read()
 
-            message = message_from_bytes(raw, policy=_smtp_policy)
-
-            _, from_addr = parseaddr(message.get('From', ''))
+            # Extract a clean envelope sender (bare address, no display name)
+            msg = message_from_bytes(raw)
+            _, from_addr = parseaddr(msg.get('From', ''))
             if not from_addr or '@' not in from_addr:
                 from_addr = 'postmortem@localhost'
 
-            if not message.get('To'):
-                message['To'] = 'postmortem@localhost'
+            # Wrap long lines so the SMTP server accepts the DATA payload
+            wrapped = _wrap_long_lines(raw)
 
             with smtplib.SMTP('127.0.0.1', 1025) as smtp:
-                smtp.send_message(
-                    message,
-                    from_addr=from_addr,
-                    to_addrs=['postmortem@localhost'],
-                )
+                smtp.sendmail(from_addr, ['postmortem@localhost'], wrapped)
 
             print(f'[*] Sent: {filepath}')
 
