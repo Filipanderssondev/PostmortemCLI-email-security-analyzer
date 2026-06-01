@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name            = "postmortemcli"
-version         = "0.3.12-beta"
+version         = "0.3.13-beta"
 description     = "Email security analysis tool – containerized CLI for structured threat detection"
 requires-python = ">=3.10"
 dependencies    = ["aiosmtpd", "dnspython", "extract-msg", "requests", "dkimpy"]
