@@ -608,8 +608,8 @@ def run_container(args: list):
         *pull_flag,
         *env_flag,
         *ca_flags,
-        '-v', f'{config_mount}:/data{z}',
-        '-v', f'{cwd_mount}:/cwd{z}',
+        '-v', f'{config_mount}:/data:z',
+        '-v', f'{cwd_mount}:/cwd:ro',
         *(['-p', '1025:1025'] if needs_port else []),
         get_image(),
     ] + args
