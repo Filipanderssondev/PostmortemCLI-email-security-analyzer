@@ -622,6 +622,7 @@ def run_container(args: list):
 def send_files(files: list):
     import smtplib
     from email import message_from_bytes
+    from email.utils import parseaddr
 
     if not files:
         print('[ERROR] Provide at least one file.')
@@ -629,44 +630,49 @@ def send_files(files: list):
         sys.exit(1)
 
     for filepath in files:
-        try:
-            with open(filepath, 'rb') as f:
-                raw = f.read()
+        if not os.path.isfile(filepath):
+            print(f'[ERROR] File not found: {filepath}')
+            continue
 
-            # Handle .msg files via extract-msg
-            ext = os.path.splitext(filepath)[1].lower()
+        ext = os.path.splitext(filepath)[1].lower()
+
+        try:
             if ext == '.msg':
                 try:
                     import extract_msg
-                    msg = extract_msg.openMsg(filepath)
-                    raw = msg.exportBytes()
                 except ImportError:
                     print('[ERROR] .msg support requires: pip install extract-msg')
                     continue
-                except Exception as e:
-                    print(f'[ERROR] Could not read .msg file: {e}')
-                    continue
+                msg_obj = extract_msg.openMsg(filepath)
+                raw     = msg_obj.exportBytes()
+            else:
+                with open(filepath, 'rb') as f:
+                    raw = f.read()
 
             message = message_from_bytes(raw)
 
-            # Add fallback To address if missing — required by SMTP
+            _, from_addr = parseaddr(message.get('From', ''))
+            if not from_addr or '@' not in from_addr:
+                from_addr = 'postmortem@localhost'
+
             if not message.get('To'):
                 message['To'] = 'postmortem@localhost'
 
             with smtplib.SMTP('127.0.0.1', 1025) as smtp:
-                smtp.sendmail(
-                    message.get('From', 'postmortem@localhost'),
-                    ['postmortem@localhost'],
-                    raw
+                smtp.send_message(
+                    message,
+                    from_addr=from_addr,
+                    to_addrs=['postmortem@localhost'],
                 )
-            print(f'[*] Sent: {os.path.basename(filepath)}')
 
-        except FileNotFoundError:
-            print(f'[ERROR] File not found: {filepath}')
+            print(f'[*] Sent: {filepath}')
+
         except ConnectionRefusedError:
             print('[ERROR] Nothing listening on port 1025.')
             print("        Run 'postmortemcli start' first.")
             sys.exit(1)
+        except Exception as e:
+            print(f'[ERROR] Send failed for {filepath}: {e}')
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
