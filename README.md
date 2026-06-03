@@ -25,7 +25,7 @@
 > Commissioned by *The Swedish Meteorological and Hydrological Institute (SMHI), IT-Production Department, IT-Security unit as production tooling for first line service desk security operations.
 
 ---
-
+<!--
 ## ⚠️ First Time Setup Required
 
 **PostmortemCLI does not work out of the box.** Before running the tool for the
@@ -44,6 +44,7 @@ Jump to the guide that applies to you:
 - [Enterprise use — First Time Setup](#b-enterprise-use--first-time-setup)
 
 ---
+-->
 
 ## Table of Contents
 
