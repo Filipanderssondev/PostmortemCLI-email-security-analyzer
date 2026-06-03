@@ -20,9 +20,10 @@
 
 # PostmortemCLI — Email Security Analyzer
 
-> **Diploma project/Capstone project** — Chas Academy SUVX24
-> Developed by Filip Andersson, 2026
-> Commissioned by *The Swedish Meteorological and Hydrological Institute (SMHI), IT-Production Department, IT-Security unit as production tooling for first line service desk security operations.
+> **Advanced Diploma (SeQF/EQF Level 6), Capstone project** <br>
+> **Developed** by **Filip Andersson, 2026, Chas Academy SUVX24** <br>
+
+> Commissioned by **The Swedish Meteorological and Hydrological Institute (SMHI)**, <br> IT-Production Department, IT-Security unit as production tooling for first line service desk security operations.
 
 ---
 <!--
